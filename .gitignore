@@ -1,0 +1,25 @@
+# Icarus Verilog and waveform outputs
+*.vvp
+*.vcd
+
+# Vivado generated files and directories
+.Xil/
+*.jou
+*.log
+*.str
+*.cache/
+*.gen/
+*.hw/
+*.ip_user_files/
+*.runs/
+*.sim/
+*.xpr
+*.bit
+*.bin
+*.mcs
+
+# Windows and editor files
+Thumbs.db
+.DS_Store
+*.swp
+*~

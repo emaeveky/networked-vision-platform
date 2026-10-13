@@ -27,6 +27,14 @@ A packet is accepted only when:
 2. Its packet ID is within the valid range 0–63.
 3. Its payload length is valid.
 4. Its packet ID has not already been received.
+5. The little-endian CRC32 after the payload matches `zlib.crc32` of those
+   1200 bytes. The header is not covered.
+
+A CRC mismatch raises `payload_error` and does not count the packet, so the
+frame is not displayed. Pixel bytes may already have been written into the
+write bank; a later good copy of that same packet overwrites them. The host
+gets one status reply after the link goes idle, with the number of packets
+that did check out.
 
 ## Duplicate packets
 
@@ -111,11 +119,13 @@ The eventual system will use separate read and write buffers:
 
 ## Current module limitation
 
-The first `packet_tracker` module does not yet accept a `frame_id` or a command to begin a new frame.
+`packet_tracker` still tracks only one received-map. `frame_engine` now owns `frame_id` policy:
 
-Therefore, its current behavior is:
+- The first accepted packet starts a frame.
+- Older `frame_id` values are late and rejected. "Older" is a modular 16-bit
+  comparison: up to 32767 frames ahead counts as newer, so the host's
+  `0xFFFF -> 0x0000` wrap is a new frame, not a late one.
+- A newer `frame_id` abandons an incomplete frame.
+- If the write bank is locked after a complete frame, a newer frame is dropped until `double_buffer_ctrl` swaps.
 
-- Reset clears the tracker.
-- Packets are accepted until all 64 packet IDs are recorded.
-- After `frame_complete` becomes 1, additional packets are ignored.
-- A future version will add explicit frame-start or frame-reset behavior.
+`pixel_writer` currently expects payload bytes on the cycles after the accepted header. Swap must wait until that payload has been written; `vision_core` does not yet stall swap on `busy`.

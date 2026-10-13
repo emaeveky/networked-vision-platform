@@ -13,6 +13,7 @@ module packet_tracker_tb;
     packet_tracker dut (
         .clk                 (clk),
         .rst                 (rst),
+        .clear               (1'b0),
         .packet_valid        (packet_valid),
         .packet_id           (packet_id),
         .received_map        (received_map),

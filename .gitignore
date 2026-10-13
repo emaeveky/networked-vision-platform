@@ -2,7 +2,18 @@
 *.vvp
 *.vcd
 
+# XSim scratch left in the repo root
+*.pb
+
+# Python
+__pycache__/
+*.pyc
+
+# Generated test vectors
+sim/vectors/
+
 # Vivado generated files and directories
+build/
 .Xil/
 *.jou
 *.log

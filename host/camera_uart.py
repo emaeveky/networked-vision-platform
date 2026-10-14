@@ -9,6 +9,7 @@ from golden import motion_box, sobel_interior, threshold
 from packet_codec import FRAME_HEIGHT, FRAME_WIDTH
 from serial_link import (
     MotionBox,
+    capture_background,
     encode_frame,
     open_serial,
     read_frame,
@@ -91,6 +92,11 @@ def main() -> None:
         default="raw",
         help="FPGA result: raw, threshold, or sobel pixels, or a motion box",
     )
+    parser.add_argument(
+        "--lock-background",
+        action="store_true",
+        help="after the first complete frame, compare later motion to that frame",
+    )
     args = parser.parse_args()
 
     if args.fps <= 0:
@@ -115,6 +121,8 @@ def main() -> None:
     frame_id = 0
     period = 1.0 / args.fps
     previous = bytes(FRAME_WIDTH * FRAME_HEIGHT)
+    background = previous
+    background_locked = False
 
     try:
         while True:
@@ -168,7 +176,11 @@ def main() -> None:
                     )
                     if status.packet_count == 64 and args.process == "motion":
                         expected = motion_box(
-                            previous, image, FRAME_WIDTH, FRAME_HEIGHT, 16
+                            background if background_locked else previous,
+                            image,
+                            FRAME_WIDTH,
+                            FRAME_HEIGHT,
+                            16,
                         )
                         got = read_motion(link)
                         if got is None:
@@ -256,7 +268,24 @@ def main() -> None:
                                     f"lengths={len(expected)}/{len(readback)}",
                                     flush=True,
                                 )
-                    if status.packet_count == 64:
+                    if (
+                        args.lock_background
+                        and not background_locked
+                        and status.packet_count == 64
+                    ):
+                        if capture_background(link):
+                            background = image
+                            background_locked = True
+                            print(
+                                f"frame {frame_id}: background locked",
+                                flush=True,
+                            )
+                        else:
+                            print(
+                                f"frame {frame_id}: background capture failed",
+                                flush=True,
+                            )
+                    if status.packet_count == 64 and not background_locked:
                         previous = image
 
             if not args.no_preview:

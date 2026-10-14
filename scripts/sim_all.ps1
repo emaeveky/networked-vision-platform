@@ -50,6 +50,10 @@ Invoke-Sim "motion_pipe_tb" @(
     "rtl/motion_box.sv",
     "sim/motion_pipe_tb.sv"
 )
+Invoke-Sim "bg_frame_tb" @(
+    "rtl/bg_frame.sv",
+    "sim/bg_frame_tb.sv"
+)
 Invoke-Sim "proto_parser_tb" @(
     "rtl/proto_parser.sv",
     "sim/proto_parser_tb.sv"
@@ -105,6 +109,7 @@ $TopSources = @(
     "rtl/img_threshold.sv",
     "rtl/img_sobel.sv",
     "rtl/motion_box.sv",
+    "rtl/bg_frame.sv",
     "rtl/arty_s7_uart_top.sv",
     "sim/arty_top_uart_tb.sv"
 )
@@ -125,6 +130,7 @@ Invoke-Sim "uart_readback_tb" @(
     "rtl/img_threshold.sv",
     "rtl/img_sobel.sv",
     "rtl/motion_box.sv",
+    "rtl/bg_frame.sv",
     "rtl/arty_s7_uart_top.sv",
     "sim/uart_readback_tb.sv"
 )
@@ -141,6 +147,7 @@ Invoke-Sim "uart_process_tb" @(
     "rtl/img_threshold.sv",
     "rtl/img_sobel.sv",
     "rtl/motion_box.sv",
+    "rtl/bg_frame.sv",
     "rtl/arty_s7_uart_top.sv",
     "sim/uart_process_tb.sv"
 )
@@ -157,6 +164,7 @@ Invoke-Sim "uart_sobel_wide_tb" @(
     "rtl/img_threshold.sv",
     "rtl/img_sobel.sv",
     "rtl/motion_box.sv",
+    "rtl/bg_frame.sv",
     "rtl/arty_s7_uart_top.sv",
     "sim/uart_sobel_wide_tb.sv"
 )

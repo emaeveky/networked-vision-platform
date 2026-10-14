@@ -64,7 +64,9 @@ interior. All three matched the host byte for byte on a full 320x240 frame:
 CRC32 is checked. A bad CRC is reported as `payload_error`, that packet is not
 counted, and the previous complete frame stays on the display path. The board
 also compares each new frame with the previous one and can return the
-bounding box and center of pixels that changed by more than 16. The preview panes remain
+bounding box and center of pixels that changed by more than 16. The host can
+freeze that comparison against one captured frame, so a still object stays
+inside the box. The preview panes remain
 software golden models.
 
 At 1 Mbaud, one 320x240 frame takes about 0.78 seconds on the wire. Start at one

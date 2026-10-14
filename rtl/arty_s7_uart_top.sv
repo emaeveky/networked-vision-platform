@@ -21,8 +21,10 @@ module arty_s7_uart_top #(
     localparam logic [7:0] SOBEL_CMD     = 8'h45;
     localparam logic [7:0] SESSION_RESET_CMD = 8'h53;
     localparam logic [7:0] MOTION_CMD = 8'h4D;
+    localparam logic [7:0] BG_CMD = 8'h42;
     localparam logic [7:0] READBACK_SYNC = 8'hD3;
     localparam logic [7:0] MOTION_SYNC = 8'hD4;
+    localparam logic [7:0] BG_SYNC = 8'hD5;
     localparam int SOBEL_BYTES = (FRAME_W - 2) * (FRAME_H - 2);
     // After a bad CRC, wait until the host has stopped sending before reporting
     // the final packet count. One millisecond is far longer than the gap
@@ -104,6 +106,16 @@ module arty_s7_uart_top #(
     logic [15:0] motion_count;
     logic [8:0] motion_cen_x;
     logic [7:0] motion_cen_y;
+    logic bg_start;
+    logic bg_ack_active;
+    logic bg_ack_pending;
+    logic bg_ack_index;
+    logic bg_busy;
+    logic bg_armed;
+    logic bg_done;
+    logic bg_rd_en;
+    logic [16:0] bg_rd_addr;
+    logic [7:0] bg_sample;
     logic readback_payload;
     logic [2:0] readback_header_index;
     logic [16:0] readback_addr;
@@ -242,9 +254,28 @@ module arty_s7_uart_top #(
     // While a new frame is arriving, borrow the display-bank read port to
     // fetch the previous pixel at the address being written. Readback keeps
     // the port once it starts.
-    wire motion_issue = mem_we && !readback_active;
-    assign rd_en   = motion_issue ? 1'b1 : (filter_mode ? issue_read : readback_active);
-    assign rd_addr = motion_issue ? mem_addr : (filter_mode ? feed_addr : readback_addr);
+    wire motion_issue = mem_we && !readback_active && !bg_busy;
+    wire bg_owns_read = bg_busy;
+    assign rd_en   = bg_owns_read ? bg_rd_en
+        : (motion_issue ? 1'b1 : (filter_mode ? issue_read : readback_active));
+    assign rd_addr = bg_owns_read ? bg_rd_addr
+        : (motion_issue ? mem_addr : (filter_mode ? feed_addr : readback_addr));
+
+    bg_frame #(.FRAME_BYTES(READBACK_BYTES)) u_bg (
+        .clk         (CLK12MHZ),
+        .rst         (core_rst),
+        .start       (bg_start),
+        .abort       (bg_busy && !parser_idle),
+        .rd_data     (rd_data),
+        .rd_en       (bg_rd_en),
+        .rd_addr     (bg_rd_addr),
+        .busy        (bg_busy),
+        .armed       (bg_armed),
+        .done        (bg_done),
+        .sample_en   (motion_issue && bg_armed),
+        .sample_addr (mem_addr),
+        .sample_data (bg_sample)
+    );
 
     motion_watch #(.WIDTH(FRAME_W), .HEIGHT(FRAME_H), .THRESH(16)) u_motion (
         .clk       (CLK12MHZ),
@@ -254,7 +285,7 @@ module arty_s7_uart_top #(
         .issue     (motion_issue),
         .curr_pix  (mem_wdata),
         .addr      (mem_addr),
-        .prev_pix  (rd_data),
+        .prev_pix  (bg_armed ? bg_sample : rd_data),
         .motion    (motion_flag),
         .min_x     (motion_min_x),
         .max_x     (motion_max_x),
@@ -267,7 +298,7 @@ module arty_s7_uart_top #(
 
     // Hold a processed pixel until the UART actually accepts it. Keeping
     // tx_valid low while the filter catches up prevents a repeated byte.
-    wire tx_valid = status_active || beacon_active || motion_active ||
+    wire tx_valid = status_active || beacon_active || motion_active || bg_ack_active ||
         (readback_active && (!filter_mode || !readback_payload || hold_valid));
 
     img_threshold u_threshold (
@@ -354,9 +385,14 @@ module arty_s7_uart_top #(
             motion_pending         <= 1'b0;
             motion_index           <= 5'd0;
             motion_frame           <= 16'd0;
+            bg_start               <= 1'b0;
+            bg_ack_active          <= 1'b0;
+            bg_ack_pending         <= 1'b0;
+            bg_ack_index           <= 1'b0;
         end
         else begin
             command_error_suppress <= 1'b0;
+            bg_start               <= 1'b0;
             session_reset          <= 1'b0;
             filter_clear           <= 1'b0;
             filter_pop             <= 1'b0;
@@ -406,7 +442,15 @@ module arty_s7_uart_top #(
                     status_pending         <= 1'b0;
                     readback_pending       <= 1'b0;
                     motion_pending         <= 1'b0;
+                    bg_ack_pending         <= 1'b0;
                     error_latch            <= 7'd0;
+                end
+                else if (parser_idle && frame_complete && !bg_busy &&
+                         !readback_active && !readback_pending &&
+                         !motion_active && !motion_pending &&
+                         rx_data == BG_CMD) begin
+                    command_error_suppress <= 1'b1;
+                    bg_start               <= 1'b1;
                 end
             end
             else if (activity_count != 0)
@@ -449,7 +493,7 @@ module arty_s7_uart_top #(
                 crc_fail_seen <= 1'b1;
 
             if (!status_active && !beacon_active && !readback_active &&
-                status_pending) begin
+                !motion_active && !bg_ack_active && status_pending) begin
                 status_active  <= 1'b1;
                 status_pending <= 1'b0;
                 status_index   <= 3'd0;
@@ -458,6 +502,7 @@ module arty_s7_uart_top #(
                 error_latch    <= 7'd0;
             end
             else if (!status_active && !beacon_active && !readback_active &&
+                     !motion_active && !bg_ack_active &&
                      !status_pending && readback_pending) begin
                 readback_active       <= 1'b1;
                 readback_pending      <= 1'b0;
@@ -478,7 +523,8 @@ module arty_s7_uart_top #(
                 tx_data               <= READBACK_SYNC;
             end
             else if (!status_active && !beacon_active && !readback_active &&
-                     !motion_active && !status_pending && !readback_pending &&
+                     !motion_active && !bg_ack_active &&
+                     !status_pending && !readback_pending &&
                      motion_pending) begin
                 motion_active  <= 1'b1;
                 motion_pending <= 1'b0;
@@ -487,7 +533,16 @@ module arty_s7_uart_top #(
             end
             else if (!status_active && !beacon_active && !readback_active &&
                      !motion_active && !status_pending && !readback_pending &&
-                     !motion_pending && beacon_tick) begin
+                     !motion_pending && bg_ack_pending) begin
+                bg_ack_active  <= 1'b1;
+                bg_ack_pending <= 1'b0;
+                bg_ack_index   <= 1'b0;
+                tx_data        <= BG_SYNC;
+            end
+            else if (!status_active && !beacon_active && !readback_active &&
+                     !motion_active && !bg_ack_active && !bg_busy &&
+                     !status_pending && !readback_pending &&
+                     !motion_pending && !bg_ack_pending && beacon_tick) begin
                 beacon_active <= 1'b1;
                 beacon_index  <= 2'd0;
                 tx_data       <= 8'hE7;
@@ -538,6 +593,15 @@ module arty_s7_uart_top #(
                         4'd15: tx_data <= motion_cen_y;
                         default: tx_data <= 8'd0;
                     endcase
+                end
+            end
+            else if (bg_ack_active && tx_ready) begin
+                if (bg_ack_index) begin
+                    bg_ack_active <= 1'b0;
+                end
+                else begin
+                    bg_ack_index <= 1'b1;
+                    tx_data      <= 8'h01;
                 end
             end
             else if (beacon_active && tx_ready) begin
@@ -618,6 +682,9 @@ module arty_s7_uart_top #(
             end
             else if (issue_read)
                 feed_capture <= 1'b1;
+
+            if (bg_done)
+                bg_ack_pending <= 1'b1;
         end
     end
 

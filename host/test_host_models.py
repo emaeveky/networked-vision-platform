@@ -3,11 +3,14 @@ import unittest
 from golden import motion_box, sobel_interior, threshold, xor_checksum
 from packet_codec import FRAME_BYTES, PACKET_BYTES, PACKETS_PER_FRAME, assemble_frame, pack_packet, split_frame, unpack_packet
 from serial_link import (
+    BG_CMD,
+    BG_SYNC,
     MOTION_CMD,
     MOTION_SYNC,
     READBACK_CMD,
     READBACK_SYNC,
     STATUS_SYNC,
+    capture_background,
     decode_status,
     encode_frame,
     read_frame,
@@ -160,6 +163,12 @@ class PacketCodecTests(unittest.TestCase):
         self.assertEqual(int(painted[3, 1]), 0)
         still = paint_motion(frame, MotionBox(1, False, 0, 0, 0, 0, 0, 0, 0))
         self.assertTrue(np.array_equal(still, frame))
+
+    def test_background_capture_ack(self) -> None:
+        link = FakeSerial(bytes([0xE7, 0xC0, 0x80, BG_SYNC, 0x01]))
+        self.assertTrue(capture_background(link))
+        self.assertEqual(link.written, bytes([BG_CMD]))
+        self.assertFalse(capture_background(FakeSerial(bytes([0xE7, 0xC0]))))
 
 
 if __name__ == "__main__":

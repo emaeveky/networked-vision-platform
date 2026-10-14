@@ -15,6 +15,8 @@ THRESHOLD_CMD = 0x54
 SOBEL_CMD = 0x45
 SESSION_RESET_CMD = 0x53
 MOTION_CMD = 0x4D
+BG_CMD = 0x42
+BG_SYNC = 0xD5
 READBACK_COMMANDS = {
     "raw": READBACK_CMD,
     "threshold": THRESHOLD_CMD,
@@ -174,6 +176,30 @@ def read_frame(link, kind: str = "raw") -> tuple[int, bytes] | None:
                 return None
             return frame_id, payload
     return None
+
+
+def capture_background(link) -> bool:
+    """Freeze the frame on display and use it for later motion comparisons.
+
+    The copy takes a few milliseconds. Returns True when the FPGA reports that
+    the frozen frame is armed. A later session reset disarms it.
+    """
+    link.reset_input_buffer()
+    link.write(bytes([BG_CMD]))
+    link.flush()
+
+    deadline = time.monotonic() + float(getattr(link, "timeout", 8.0) or 8.0)
+    while time.monotonic() < deadline:
+        first = link.read(1)
+        if not first:
+            return False
+        if first[0] == BG_SYNC:
+            rest = link.read(1)
+            if rest == bytes([0x01]):
+                return True
+            if not rest:
+                return False
+    return False
 
 
 def read_motion(link) -> MotionBox | None:

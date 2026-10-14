@@ -21,7 +21,9 @@ module motion_box #(
     output logic [8:0]  max_x,
     output logic [7:0]  min_y,
     output logic [7:0]  max_y,
-    output logic [15:0] pix_count
+    output logic [15:0] pix_count,
+    output logic [8:0]  cen_x,
+    output logic [7:0]  cen_y
 );
 
     logic        live_motion;
@@ -30,6 +32,21 @@ module motion_box #(
     logic [7:0]  live_min_y;
     logic [7:0]  live_max_y;
     logic [15:0] live_count;
+    logic [16:0] live_full;
+    logic [31:0] live_sum_x;
+    logic [31:0] live_sum_y;
+    logic        div_wait;
+    logic [1:0]  div_phase;
+    logic [4:0]  div_bit;
+    logic [31:0] div_numer;
+    logic [31:0] div_rem;
+    logic [31:0] div_quot;
+    logic [31:0] div_den;
+    logic [31:0] cap_sum_x;
+    logic [31:0] cap_sum_y;
+    logic [16:0] cap_count;
+    logic [31:0] quot_next;
+    logic [31:0] rem_next;
 
     function automatic logic [16:0] row_of(input logic [16:0] value);
         logic [16:0] quot;
@@ -66,12 +83,27 @@ module motion_box #(
             live_min_y  <= 8'd0;
             live_max_y  <= 8'd0;
             live_count  <= 16'd0;
+            live_full   <= 17'd0;
+            live_sum_x  <= 32'd0;
+            live_sum_y  <= 32'd0;
+            div_wait    <= 1'b0;
+            div_phase   <= 2'd0;
+            div_bit     <= 5'd0;
+            div_numer   <= 32'd0;
+            div_rem     <= 32'd0;
+            div_quot    <= 32'd0;
+            div_den     <= 32'd0;
+            cap_sum_x   <= 32'd0;
+            cap_sum_y   <= 32'd0;
+            cap_count   <= 17'd0;
             motion      <= 1'b0;
             min_x       <= 9'd0;
             max_x       <= 9'd0;
             min_y       <= 8'd0;
             max_y       <= 8'd0;
             pix_count   <= 16'd0;
+            cen_x       <= 9'd0;
+            cen_y       <= 8'd0;
         end
         else begin
             if (latch) begin
@@ -81,6 +113,51 @@ module motion_box #(
                 min_y     <= live_motion ? live_min_y : 8'd0;
                 max_y     <= live_motion ? live_max_y : 8'd0;
                 pix_count <= live_count;
+                cap_sum_x <= live_sum_x;
+                cap_sum_y <= live_sum_y;
+                cap_count <= live_full;
+                if (live_motion && live_full != 17'd0)
+                    div_wait <= 1'b1;
+                else begin
+                    div_wait  <= 1'b0;
+                    div_phase <= 2'd0;
+                    cen_x     <= 9'd0;
+                    cen_y     <= 8'd0;
+                end
+            end
+            else if (div_wait) begin
+                div_wait  <= 1'b0;
+                div_phase <= 2'd1;
+                div_bit   <= 5'd31;
+                div_numer <= cap_sum_x;
+                div_den   <= {15'd0, cap_count};
+                div_rem   <= 32'd0;
+                div_quot  <= 32'd0;
+            end
+            else if (div_phase != 2'd0) begin
+                rem_next  = {div_rem[30:0], div_numer[31]};
+                quot_next = {div_quot[30:0], (rem_next >= div_den)};
+                if (rem_next >= div_den)
+                    rem_next = rem_next - div_den;
+
+                if (div_bit == 5'd0 && div_phase == 2'd1) begin
+                    cen_x     <= quot_next[8:0];
+                    div_phase <= 2'd2;
+                    div_bit   <= 5'd31;
+                    div_numer <= cap_sum_y;
+                    div_rem   <= 32'd0;
+                    div_quot  <= 32'd0;
+                end
+                else if (div_bit == 5'd0) begin
+                    cen_y     <= quot_next[7:0];
+                    div_phase <= 2'd0;
+                end
+                else begin
+                    div_bit   <= div_bit - 5'd1;
+                    div_numer <= {div_numer[30:0], 1'b0};
+                    div_rem   <= rem_next;
+                    div_quot  <= quot_next;
+                end
             end
 
             if (clear) begin
@@ -90,6 +167,9 @@ module motion_box #(
                 live_min_y  <= 8'd0;
                 live_max_y  <= 8'd0;
                 live_count  <= 16'd0;
+                live_full   <= 17'd0;
+                live_sum_x  <= 32'd0;
+                live_sum_y  <= 32'd0;
             end
             else if (hit) begin
                 if (!live_motion || col9 < live_min_x)
@@ -102,6 +182,9 @@ module motion_box #(
                     live_max_y <= row8;
                 if (live_count != 16'hFFFF)
                     live_count <= live_count + 16'd1;
+                live_full   <= live_full + 17'd1;
+                live_sum_x  <= live_sum_x + 32'(col);
+                live_sum_y  <= live_sum_y + 32'(row);
                 live_motion <= 1'b1;
             end
         end
@@ -129,7 +212,9 @@ module motion_watch #(
     output logic [8:0]  max_x,
     output logic [7:0]  min_y,
     output logic [7:0]  max_y,
-    output logic [15:0] pix_count
+    output logic [15:0] pix_count,
+    output logic [8:0]  cen_x,
+    output logic [7:0]  cen_y
 );
 
     logic        pend;
@@ -164,7 +249,9 @@ module motion_watch #(
         .max_x        (max_x),
         .min_y        (min_y),
         .max_y        (max_y),
-        .pix_count    (pix_count)
+        .pix_count    (pix_count),
+        .cen_x        (cen_x),
+        .cen_y        (cen_y)
     );
 
 endmodule

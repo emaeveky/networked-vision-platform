@@ -22,7 +22,7 @@ READBACK_COMMANDS = {
 }
 READBACK_SYNC = 0xD3
 MOTION_SYNC = 0xD4
-MOTION_BYTES = 14
+MOTION_BYTES = 18
 READBACK_HEADER_BYTES = 6
 
 # Bit order matches error_latch in rtl/arty_s7_uart_top.sv. Flags accumulate
@@ -53,6 +53,8 @@ class MotionBox:
     max_x: int
     max_y: int
     count: int
+    cen_x: int
+    cen_y: int
 
 
 @dataclass(frozen=True)
@@ -197,5 +199,7 @@ def read_motion(link) -> MotionBox | None:
                 max_x=rest[7] | (rest[8] << 8),
                 max_y=rest[9] | (rest[10] << 8),
                 count=rest[11] | (rest[12] << 8),
+                cen_x=rest[13] | (rest[14] << 8),
+                cen_y=rest[15] | (rest[16] << 8),
             )
     return None

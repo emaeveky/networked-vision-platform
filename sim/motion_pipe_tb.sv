@@ -16,6 +16,8 @@ module motion_pipe_tb;
     logic [7:0]  min_y;
     logic [7:0]  max_y;
     logic [15:0] pix_count;
+    logic [8:0]  cen_x;
+    logic [7:0]  cen_y;
 
     localparam int WIDTH = 320;
 
@@ -45,7 +47,9 @@ module motion_pipe_tb;
         .max_x     (max_x),
         .min_y     (min_y),
         .max_y     (max_y),
-        .pix_count (pix_count)
+        .pix_count (pix_count),
+        .cen_x     (cen_x),
+        .cen_y     (cen_y)
     );
 
     always #5 clk = ~clk;
@@ -94,7 +98,12 @@ module motion_pipe_tb;
             $fatal(1, "box motion=%0b x=%0d..%0d y=%0d..%0d count=%0d",
                    motion, min_x, max_x, min_y, max_y, pix_count);
 
-        $display("PASS: motion box matched the two pixels above threshold");
+        repeat (80) @(posedge clk);
+        #1;
+        if (cen_x !== 9'd10 || cen_y !== 8'd20)
+            $fatal(1, "centroid is (%0d,%0d), expected (10,20)", cen_x, cen_y);
+
+        $display("PASS: motion box and centroid matched the two pixels above threshold");
         $finish;
     end
 endmodule

@@ -94,7 +94,7 @@ module arty_s7_uart_top #(
     logic readback_pending;
     logic motion_active;
     logic motion_pending;
-    logic [3:0] motion_index;
+    logic [4:0] motion_index;
     logic [15:0] motion_frame;
     logic motion_flag;
     logic [8:0] motion_min_x;
@@ -102,6 +102,8 @@ module arty_s7_uart_top #(
     logic [7:0] motion_min_y;
     logic [7:0] motion_max_y;
     logic [15:0] motion_count;
+    logic [8:0] motion_cen_x;
+    logic [7:0] motion_cen_y;
     logic readback_payload;
     logic [2:0] readback_header_index;
     logic [16:0] readback_addr;
@@ -258,7 +260,9 @@ module arty_s7_uart_top #(
         .max_x     (motion_max_x),
         .min_y     (motion_min_y),
         .max_y     (motion_max_y),
-        .pix_count (motion_count)
+        .pix_count (motion_count),
+        .cen_x     (motion_cen_x),
+        .cen_y     (motion_cen_y)
     );
 
     // Hold a processed pixel until the UART actually accepts it. Keeping
@@ -348,7 +352,7 @@ module arty_s7_uart_top #(
             crc_idle               <= 14'd0;
             motion_active          <= 1'b0;
             motion_pending         <= 1'b0;
-            motion_index           <= 4'd0;
+            motion_index           <= 5'd0;
             motion_frame           <= 16'd0;
         end
         else begin
@@ -478,7 +482,7 @@ module arty_s7_uart_top #(
                      motion_pending) begin
                 motion_active  <= 1'b1;
                 motion_pending <= 1'b0;
-                motion_index   <= 4'd0;
+                motion_index   <= 5'd0;
                 tx_data        <= MOTION_SYNC;
             end
             else if (!status_active && !beacon_active && !readback_active &&
@@ -511,10 +515,10 @@ module arty_s7_uart_top #(
                 end
             end
             else if (motion_active && tx_ready) begin
-                if (motion_index == 4'd13)
+                if (motion_index == 5'd17)
                     motion_active <= 1'b0;
                 else begin
-                    motion_index <= motion_index + 4'd1;
+                    motion_index <= motion_index + 5'd1;
                     case (motion_index)
                         4'd0:  tx_data <= motion_frame[7:0];
                         4'd1:  tx_data <= motion_frame[15:8];
@@ -528,7 +532,11 @@ module arty_s7_uart_top #(
                         4'd9:  tx_data <= motion_max_y;
                         4'd10: tx_data <= 8'd0;
                         4'd11: tx_data <= motion_count[7:0];
-                        default: tx_data <= motion_count[15:8];
+                        4'd12: tx_data <= motion_count[15:8];
+                        4'd13: tx_data <= motion_cen_x[7:0];
+                        4'd14: tx_data <= {7'd0, motion_cen_x[8]};
+                        4'd15: tx_data <= motion_cen_y;
+                        default: tx_data <= 8'd0;
                     endcase
                 end
             end

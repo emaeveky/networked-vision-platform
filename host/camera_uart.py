@@ -49,6 +49,17 @@ def paint_motion(frame, box):
     view[y1, x0 : x1 + 1] = 255
     view[y0 : y1 + 1, x0] = 255
     view[y0 : y1 + 1, x1] = 255
+    cx = min(max(int(box.cen_x), 0), width - 1)
+    cy = min(max(int(box.cen_y), 0), height - 1)
+    view[cy, cx] = 255
+    if cx > 0:
+        view[cy, cx - 1] = 255
+    if cx + 1 < width:
+        view[cy, cx + 1] = 255
+    if cy > 0:
+        view[cy - 1, cx] = 255
+    if cy + 1 < height:
+        view[cy + 1, cx] = 255
     return view
 
 
@@ -172,11 +183,14 @@ def main() -> None:
                             got.max_x,
                             got.max_y,
                             got.count,
+                            got.cen_x,
+                            got.cen_y,
                         ) == expected:
                             print(
                                 f"frame {got.frame_id}: motion verified "
                                 f"x={got.min_x}..{got.max_x} "
                                 f"y={got.min_y}..{got.max_y} "
+                                f"center=({got.cen_x},{got.cen_y}) "
                                 f"count={got.count}",
                                 flush=True,
                             )
@@ -184,7 +198,8 @@ def main() -> None:
                             print(
                                 f"frame {got.frame_id}: motion mismatch "
                                 f"got=({got.motion},{got.min_x},{got.min_y},"
-                                f"{got.max_x},{got.max_y},{got.count}) "
+                                f"{got.max_x},{got.max_y},{got.count},"
+                                f"{got.cen_x},{got.cen_y}) "
                                 f"expected={expected}",
                                 flush=True,
                             )

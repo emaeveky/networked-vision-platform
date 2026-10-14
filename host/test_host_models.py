@@ -104,9 +104,12 @@ class PacketCodecTests(unittest.TestCase):
         current[4 * 8 + 6] = 40
         self.assertEqual(
             motion_box(previous, bytes(current), 8, 8, 16),
-            (True, 5, 4, 6, 4, 2),
+            (True, 5, 4, 6, 4, 2, 5, 4),
         )
-        self.assertEqual(motion_box(previous, previous, 8, 8, 16), (False, 0, 0, 0, 0, 0))
+        self.assertEqual(
+            motion_box(previous, previous, 8, 8, 16),
+            (False, 0, 0, 0, 0, 0, 0, 0),
+        )
 
     def test_motion_reply_decode(self) -> None:
         payload = bytes(
@@ -125,13 +128,20 @@ class PacketCodecTests(unittest.TestCase):
                 0,
                 2,
                 0,
+                4,
+                0,
+                5,
+                0,
             ]
         )
         link = FakeSerial(payload)
         got = read_motion(link)
         self.assertEqual(link.written, bytes([MOTION_CMD]))
         self.assertEqual(got.frame_id, 2)
-        self.assertEqual((got.motion, got.min_x, got.min_y, got.max_x, got.max_y, got.count), (True, 10, 20, 11, 20, 2))
+        self.assertEqual(
+            (got.motion, got.min_x, got.min_y, got.max_x, got.max_y, got.count, got.cen_x, got.cen_y),
+            (True, 10, 20, 11, 20, 2, 4, 5),
+        )
 
     def test_paint_motion_draws_border_without_changing_source(self) -> None:
         import numpy as np
@@ -140,14 +150,15 @@ class PacketCodecTests(unittest.TestCase):
 
         frame = np.zeros((8, 8), np.uint8)
         original = frame.copy()
-        painted = paint_motion(frame, MotionBox(1, True, 2, 3, 5, 6, 4))
+        painted = paint_motion(frame, MotionBox(1, True, 2, 3, 5, 6, 4, 4, 4))
         self.assertTrue(np.array_equal(frame, original))
         self.assertEqual(int(painted[3, 2]), 255)
         self.assertEqual(int(painted[3, 5]), 255)
         self.assertEqual(int(painted[6, 5]), 255)
-        self.assertEqual(int(painted[4, 4]), 0)
+        self.assertEqual(int(painted[4, 4]), 255)
+        self.assertEqual(int(painted[5, 3]), 0)
         self.assertEqual(int(painted[3, 1]), 0)
-        still = paint_motion(frame, MotionBox(1, False, 0, 0, 0, 0, 0))
+        still = paint_motion(frame, MotionBox(1, False, 0, 0, 0, 0, 0, 0, 0))
         self.assertTrue(np.array_equal(still, frame))
 
 

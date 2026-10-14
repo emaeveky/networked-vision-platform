@@ -39,20 +39,25 @@ def sobel_interior(image: bytes, width: int, height: int) -> bytes:
 
 def motion_box(
     previous: bytes, current: bytes, width: int, height: int, thresh: int = 16
-) -> tuple[bool, int, int, int, int, int]:
+) -> tuple[bool, int, int, int, int, int, int, int]:
     """Inclusive box of pixels whose absolute difference exceeds thresh.
 
-    Matches motion_box RTL. Returns motion, min_x, min_y, max_x, max_y, count.
-    count saturates at 65535. An empty result is all zeros.
+    Matches motion_box RTL. Returns motion, min_x, min_y, max_x, max_y,
+    count, cen_x, cen_y. count saturates at 65535. The center is the integer
+    average of the changed pixels. An empty result is all zeros.
     """
     min_x = min_y = None
     max_x = max_y = 0
     count = 0
+    sum_x = 0
+    sum_y = 0
     for y in range(height):
         row = y * width
         for x in range(width):
             if abs(current[row + x] - previous[row + x]) > thresh:
                 count += 1
+                sum_x += x
+                sum_y += y
                 if min_x is None:
                     min_x = max_x = x
                     min_y = max_y = y
@@ -62,8 +67,17 @@ def motion_box(
                     min_y = min(min_y, y)
                     max_y = max(max_y, y)
     if min_x is None:
-        return False, 0, 0, 0, 0, 0
-    return True, min_x, min_y, max_x, max_y, min(count, 65535)
+        return False, 0, 0, 0, 0, 0, 0, 0
+    return (
+        True,
+        min_x,
+        min_y,
+        max_x,
+        max_y,
+        min(count, 65535),
+        sum_x // count,
+        sum_y // count,
+    )
 
 
 def xor_checksum(image: bytes) -> int:

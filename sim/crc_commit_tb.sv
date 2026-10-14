@@ -79,7 +79,10 @@ module crc_commit_tb;
         .pending_display     (),
         .current_frame_id    (),
         .unique_packet_count (unique_packet_count),
-        .write_count         ()
+        .write_count         (),
+        .mem_we              (),
+        .mem_addr            (),
+        .mem_wdata           ()
     );
 
     always #5 clk = ~clk;

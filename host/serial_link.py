@@ -14,12 +14,15 @@ READBACK_CMD = 0x52
 THRESHOLD_CMD = 0x54
 SOBEL_CMD = 0x45
 SESSION_RESET_CMD = 0x53
+MOTION_CMD = 0x4D
 READBACK_COMMANDS = {
     "raw": READBACK_CMD,
     "threshold": THRESHOLD_CMD,
     "sobel": SOBEL_CMD,
 }
 READBACK_SYNC = 0xD3
+MOTION_SYNC = 0xD4
+MOTION_BYTES = 14
 READBACK_HEADER_BYTES = 6
 
 # Bit order matches error_latch in rtl/arty_s7_uart_top.sv. Flags accumulate
@@ -39,6 +42,17 @@ ERROR_FLAG_NAMES = (
 def describe_errors(flags: int) -> str:
     names = [name for bit, name in enumerate(ERROR_FLAG_NAMES) if flags & (1 << bit)]
     return ",".join(names) if names else "none"
+
+
+@dataclass(frozen=True)
+class MotionBox:
+    frame_id: int
+    motion: bool
+    min_x: int
+    min_y: int
+    max_x: int
+    max_y: int
+    count: int
 
 
 @dataclass(frozen=True)
@@ -157,4 +171,31 @@ def read_frame(link, kind: str = "raw") -> tuple[int, bytes] | None:
             if payload is None:
                 return None
             return frame_id, payload
+    return None
+
+
+def read_motion(link) -> MotionBox | None:
+    """Ask for the bounding box of the frame that just became visible."""
+    link.reset_input_buffer()
+    link.write(bytes([MOTION_CMD]))
+    link.flush()
+
+    deadline = time.monotonic() + float(getattr(link, "timeout", 8.0) or 8.0)
+    while time.monotonic() < deadline:
+        first = link.read(1)
+        if not first:
+            return None
+        if first[0] == MOTION_SYNC:
+            rest = _read_exact(link, MOTION_BYTES - 1)
+            if rest is None:
+                return None
+            return MotionBox(
+                frame_id=rest[0] | (rest[1] << 8),
+                motion=bool(rest[2] & 1),
+                min_x=rest[3] | (rest[4] << 8),
+                min_y=rest[5] | (rest[6] << 8),
+                max_x=rest[7] | (rest[8] << 8),
+                max_y=rest[9] | (rest[10] << 8),
+                count=rest[11] | (rest[12] << 8),
+            )
     return None

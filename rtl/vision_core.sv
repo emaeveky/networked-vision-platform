@@ -32,12 +32,11 @@ module vision_core (
     output logic        pending_display,
     output logic [15:0] current_frame_id,
     output logic [6:0]  unique_packet_count,
-    output logic [16:0] write_count
+    output logic [16:0] write_count,
+    output logic        mem_we,
+    output logic [16:0] mem_addr,
+    output logic [7:0]  mem_wdata
 );
-
-    logic        mem_we;
-    logic [16:0] mem_addr;
-    logic [7:0]  mem_wdata;
     logic [63:0] received_map;
     logic        have_frame;
     logic        writer_busy;

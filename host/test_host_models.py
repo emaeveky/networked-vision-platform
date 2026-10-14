@@ -1,8 +1,18 @@
 import unittest
 
-from golden import sobel_interior, threshold, xor_checksum
+from golden import motion_box, sobel_interior, threshold, xor_checksum
 from packet_codec import FRAME_BYTES, PACKET_BYTES, PACKETS_PER_FRAME, assemble_frame, pack_packet, split_frame, unpack_packet
-from serial_link import READBACK_CMD, READBACK_SYNC, STATUS_SYNC, decode_status, encode_frame, read_frame
+from serial_link import (
+    MOTION_CMD,
+    MOTION_SYNC,
+    READBACK_CMD,
+    READBACK_SYNC,
+    STATUS_SYNC,
+    decode_status,
+    encode_frame,
+    read_frame,
+    read_motion,
+)
 
 
 class FakeSerial:
@@ -85,6 +95,60 @@ class PacketCodecTests(unittest.TestCase):
         result = read_frame(link)
         self.assertEqual(link.written, bytes([READBACK_CMD]))
         self.assertEqual(result, (0x1234, image))
+
+    def test_motion_box_ignores_small_changes(self) -> None:
+        previous = bytes(8 * 8)
+        current = bytearray(previous)
+        current[2 * 8 + 3] = 16
+        current[4 * 8 + 5] = 17
+        current[4 * 8 + 6] = 40
+        self.assertEqual(
+            motion_box(previous, bytes(current), 8, 8, 16),
+            (True, 5, 4, 6, 4, 2),
+        )
+        self.assertEqual(motion_box(previous, previous, 8, 8, 16), (False, 0, 0, 0, 0, 0))
+
+    def test_motion_reply_decode(self) -> None:
+        payload = bytes(
+            [
+                MOTION_SYNC,
+                0x02,
+                0x00,
+                1,
+                10,
+                0,
+                20,
+                0,
+                11,
+                0,
+                20,
+                0,
+                2,
+                0,
+            ]
+        )
+        link = FakeSerial(payload)
+        got = read_motion(link)
+        self.assertEqual(link.written, bytes([MOTION_CMD]))
+        self.assertEqual(got.frame_id, 2)
+        self.assertEqual((got.motion, got.min_x, got.min_y, got.max_x, got.max_y, got.count), (True, 10, 20, 11, 20, 2))
+
+    def test_paint_motion_draws_border_without_changing_source(self) -> None:
+        import numpy as np
+        from camera_uart import paint_motion
+        from serial_link import MotionBox
+
+        frame = np.zeros((8, 8), np.uint8)
+        original = frame.copy()
+        painted = paint_motion(frame, MotionBox(1, True, 2, 3, 5, 6, 4))
+        self.assertTrue(np.array_equal(frame, original))
+        self.assertEqual(int(painted[3, 2]), 255)
+        self.assertEqual(int(painted[3, 5]), 255)
+        self.assertEqual(int(painted[6, 5]), 255)
+        self.assertEqual(int(painted[4, 4]), 0)
+        self.assertEqual(int(painted[3, 1]), 0)
+        still = paint_motion(frame, MotionBox(1, False, 0, 0, 0, 0, 0))
+        self.assertTrue(np.array_equal(still, frame))
 
 
 if __name__ == "__main__":

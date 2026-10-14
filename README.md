@@ -62,8 +62,10 @@ the raw display buffer, the hardware threshold image, or the hardware Sobel
 interior. All three matched the host byte for byte on a full 320x240 frame:
 76,800 raw or threshold pixels, and 75,684 Sobel pixels. Each packet's payload
 CRC32 is checked. A bad CRC is reported as `payload_error`, that packet is not
-counted, and the previous complete frame stays on the display path. The preview
-panes remain software golden models.
+counted, and the previous complete frame stays on the display path. The board
+also compares each new frame with the previous one and can return just the
+bounding box of pixels that changed by more than 16. The preview panes remain
+software golden models.
 
 At 1 Mbaud, one 320x240 frame takes about 0.78 seconds on the wire. Start at one
 frame per second. This is a bring-up link, not the eventual Gigabit transport.
@@ -119,11 +121,13 @@ With the programmed Arty on `COM9`:
 py -3 host/camera_uart.py --port COM9 --source gradient --fps 1 --readback --process raw
 py -3 host/camera_uart.py --port COM9 --source gradient --fps 1 --readback --process threshold
 py -3 host/camera_uart.py --port COM9 --source gradient --fps 1 --readback --process sobel
+py -3 host/camera_uart.py --port COM9 --source gradient --fps 1 --no-preview --frames 2 --process motion
 ```
 
 Press `q` or Escape in the preview to stop. Use `--source gradient` when a
 webcam is unavailable. `--readback` compares every returned FPGA pixel with
-the host result. `--process` selects `raw`, `threshold`, or `sobel`.
+the host result. `--process` selects `raw`, `threshold`, `sobel`, or `motion`.
+In motion mode the left preview pane draws the box returned by the FPGA.
 
 ## Create the Arty S7-50 Vivado project
 

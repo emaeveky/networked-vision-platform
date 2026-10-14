@@ -16,6 +16,7 @@ add_files [list \
     [file join $root rtl vision_core.sv] \
     [file join $root rtl img_threshold.sv] \
     [file join $root rtl img_sobel.sv] \
+    [file join $root rtl motion_box.sv] \
     [file join $root rtl arty_s7_uart_top.sv] \
 ]
 add_files -fileset constrs_1 [file join $root constraints arty_s7_50_uart.xdc]

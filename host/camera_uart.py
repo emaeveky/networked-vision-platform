@@ -5,9 +5,16 @@ from __future__ import annotations
 import argparse
 import time
 
-from golden import sobel_interior, threshold
+from golden import motion_box, sobel_interior, threshold
 from packet_codec import FRAME_HEIGHT, FRAME_WIDTH
-from serial_link import encode_frame, open_serial, read_frame, read_status
+from serial_link import (
+    MotionBox,
+    encode_frame,
+    open_serial,
+    read_frame,
+    read_motion,
+    read_status,
+)
 
 
 def gradient_frame(frame_id: int) -> bytes:
@@ -16,6 +23,33 @@ def gradient_frame(frame_id: int) -> bytes:
         for y in range(FRAME_HEIGHT)
         for x in range(FRAME_WIDTH)
     )
+
+
+def paint_motion(frame, box):
+    """Return a copy of a grayscale frame with the motion rectangle in white.
+
+    The source frame is left unchanged, because those bytes may still be the
+    image stored for the next comparison.
+    """
+    import numpy as np
+
+    view = np.array(frame, dtype=np.uint8, copy=True)
+    if box is None or not box.motion:
+        return view
+    height, width = view.shape[:2]
+    x0 = min(max(int(box.min_x), 0), width - 1)
+    x1 = min(max(int(box.max_x), 0), width - 1)
+    y0 = min(max(int(box.min_y), 0), height - 1)
+    y1 = min(max(int(box.max_y), 0), height - 1)
+    if x1 < x0:
+        x0, x1 = x1, x0
+    if y1 < y0:
+        y0, y1 = y1, y0
+    view[y0, x0 : x1 + 1] = 255
+    view[y1, x0 : x1 + 1] = 255
+    view[y0 : y1 + 1, x0] = 255
+    view[y0 : y1 + 1, x1] = 255
+    return view
 
 
 def main() -> None:
@@ -42,9 +76,9 @@ def main() -> None:
     )
     parser.add_argument(
         "--process",
-        choices=("raw", "threshold", "sobel"),
+        choices=("raw", "threshold", "sobel", "motion"),
         default="raw",
-        help="FPGA image returned by --readback",
+        help="FPGA result: raw, threshold, or sobel pixels, or a motion box",
     )
     args = parser.parse_args()
 
@@ -69,6 +103,7 @@ def main() -> None:
 
     frame_id = 0
     period = 1.0 / args.fps
+    previous = bytes(FRAME_WIDTH * FRAME_HEIGHT)
 
     try:
         while True:
@@ -96,6 +131,8 @@ def main() -> None:
                 sobel_interior(image, FRAME_WIDTH, FRAME_HEIGHT), dtype=np.uint8
             ).reshape(FRAME_HEIGHT - 2, FRAME_WIDTH - 2)
 
+            overlay = None
+            overlay_name = "software motion"
             if link is not None:
                 payload = encode_frame(frame_id, image)
                 # Drop anything left over so a status reply is never mistaken
@@ -118,7 +155,43 @@ def main() -> None:
                         f"errors=0x{status.error_flags:02x} ({status.errors})",
                         flush=True,
                     )
-                    if args.readback and status.packet_count == 64:
+                    if status.packet_count == 64 and args.process == "motion":
+                        expected = motion_box(
+                            previous, image, FRAME_WIDTH, FRAME_HEIGHT, 16
+                        )
+                        got = read_motion(link)
+                        if got is None:
+                            print(
+                                f"frame {frame_id}: no FPGA motion response",
+                                flush=True,
+                            )
+                        elif (
+                            got.motion,
+                            got.min_x,
+                            got.min_y,
+                            got.max_x,
+                            got.max_y,
+                            got.count,
+                        ) == expected:
+                            print(
+                                f"frame {got.frame_id}: motion verified "
+                                f"x={got.min_x}..{got.max_x} "
+                                f"y={got.min_y}..{got.max_y} "
+                                f"count={got.count}",
+                                flush=True,
+                            )
+                        else:
+                            print(
+                                f"frame {got.frame_id}: motion mismatch "
+                                f"got=({got.motion},{got.min_x},{got.min_y},"
+                                f"{got.max_x},{got.max_y},{got.count}) "
+                                f"expected={expected}",
+                                flush=True,
+                            )
+                        if got is not None:
+                            overlay = got
+                            overlay_name = "FPGA motion"
+                    elif args.readback and status.packet_count == 64:
                         if args.process == "threshold":
                             expected = threshold(image, args.threshold)
                         elif args.process == "sobel":
@@ -168,12 +241,27 @@ def main() -> None:
                                     f"lengths={len(expected)}/{len(readback)}",
                                     flush=True,
                                 )
+                    if status.packet_count == 64:
+                        previous = image
 
             if not args.no_preview:
-                preview = np.hstack((gray, binary, edges))
-                cv2.imshow("original | threshold | Sobel golden", preview)
+                shown = gray
+                title = "original | threshold | Sobel golden"
+                if args.process == "motion":
+                    if overlay is None and link is None:
+                        found = motion_box(
+                            previous, image, FRAME_WIDTH, FRAME_HEIGHT, 16
+                        )
+                        overlay = MotionBox(frame_id, *found)
+                    shown = paint_motion(gray, overlay)
+                    title = f"{overlay_name} | threshold | Sobel"
+                preview = np.hstack((shown, binary, edges))
+                cv2.imshow(title, preview)
                 if cv2.waitKey(1) & 0xFF in (27, ord("q")):
                     break
+
+            if link is None and args.process == "motion":
+                previous = image
 
             frame_id = (frame_id + 1) & 0xFFFF
             if args.frames and frame_id >= args.frames:

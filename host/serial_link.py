@@ -23,6 +23,7 @@ READBACK_COMMANDS = {
     "raw": READBACK_CMD,
     "threshold": THRESHOLD_CMD,
     "sobel": SOBEL_CMD,
+    "ddr": 0x46,
 }
 READBACK_SYNC = 0xD3
 MOTION_SYNC = 0xD4

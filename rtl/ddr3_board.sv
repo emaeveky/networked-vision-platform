@@ -4,6 +4,16 @@
 module ddr3_board (
     input  logic        clk12,
     input  logic        clk100,
+    input  logic        rst12,
+    input  logic        copy_go,
+    output logic        copy_busy,
+    output logic        copy_rd_en,
+    output logic [16:0] copy_rd_addr,
+    input  logic [7:0]  copy_rd_data,
+    output logic [7:0]  copy_byte,
+    output logic        copy_valid,
+    output logic        copy_last,
+    input  logic        copy_ready,
 
     output logic        calib,
     output logic        test_done,
@@ -62,6 +72,41 @@ module ddr3_board (
     logic        rready;
     logic        raw_done;
     logic        raw_pass;
+    logic        use_frame;
+
+    logic [27:0] pat_awaddr;
+    logic [7:0]  pat_awlen;
+    logic [2:0]  pat_awsize;
+    logic [1:0]  pat_awburst;
+    logic        pat_awvalid;
+    logic [127:0] pat_wdata;
+    logic [15:0] pat_wstrb;
+    logic        pat_wlast;
+    logic        pat_wvalid;
+    logic        pat_bready;
+    logic [27:0] pat_araddr;
+    logic [7:0]  pat_arlen;
+    logic [2:0]  pat_arsize;
+    logic [1:0]  pat_arburst;
+    logic        pat_arvalid;
+    logic        pat_rready;
+
+    logic [27:0] frm_awaddr;
+    logic [7:0]  frm_awlen;
+    logic [2:0]  frm_awsize;
+    logic [1:0]  frm_awburst;
+    logic        frm_awvalid;
+    logic [127:0] frm_wdata;
+    logic [15:0] frm_wstrb;
+    logic        frm_wlast;
+    logic        frm_wvalid;
+    logic        frm_bready;
+    logic [27:0] frm_araddr;
+    logic [7:0]  frm_arlen;
+    logic [2:0]  frm_arsize;
+    logic [1:0]  frm_arburst;
+    logic        frm_arvalid;
+    logic        frm_rready;
     (* ASYNC_REG = "TRUE" *) logic [2:0] sync0;
     (* ASYNC_REG = "TRUE" *) logic [2:0] sync1;
 
@@ -157,34 +202,95 @@ module ddr3_board (
         .clk     (ui_clk),
         .rst     (ui_rst),
         .calib   (init_calib_complete),
-        .awaddr  (awaddr),
-        .awlen   (awlen),
-        .awsize  (awsize),
-        .awburst (awburst),
-        .awvalid (awvalid),
+        .awaddr  (pat_awaddr),
+        .awlen   (pat_awlen),
+        .awsize  (pat_awsize),
+        .awburst (pat_awburst),
+        .awvalid (pat_awvalid),
         .awready (awready),
-        .wdata   (wdata),
-        .wstrb   (wstrb),
-        .wlast   (wlast),
-        .wvalid  (wvalid),
+        .wdata   (pat_wdata),
+        .wstrb   (pat_wstrb),
+        .wlast   (pat_wlast),
+        .wvalid  (pat_wvalid),
         .wready  (wready),
         .bresp   (bresp),
         .bvalid  (bvalid),
-        .bready  (bready),
-        .araddr  (araddr),
-        .arlen   (arlen),
-        .arsize  (arsize),
-        .arburst (arburst),
-        .arvalid (arvalid),
+        .bready  (pat_bready),
+        .araddr  (pat_araddr),
+        .arlen   (pat_arlen),
+        .arsize  (pat_arsize),
+        .arburst (pat_arburst),
+        .arvalid (pat_arvalid),
         .arready (arready),
         .rdata   (rdata),
         .rresp   (rresp),
         .rlast   (rlast),
         .rvalid  (rvalid),
-        .rready  (rready),
+        .rready  (pat_rready),
         .done    (raw_done),
         .pass    (raw_pass)
     );
+
+    assign use_frame = raw_done;
+
+    ddr3_link u_link (
+        .clk_byte  (clk12),
+        .rst_byte  (rst12),
+        .clk_ddr   (ui_clk),
+        .rst_ddr   (ui_rst),
+        .gate      (raw_done),
+        .go        (copy_go),
+        .rd_en     (copy_rd_en),
+        .rd_addr   (copy_rd_addr),
+        .rd_data   (copy_rd_data),
+        .out_byte  (copy_byte),
+        .out_valid (copy_valid),
+        .out_last  (copy_last),
+        .out_ready (copy_ready),
+        .busy      (copy_busy),
+        .awaddr    (frm_awaddr),
+        .awlen     (frm_awlen),
+        .awsize    (frm_awsize),
+        .awburst   (frm_awburst),
+        .awvalid   (frm_awvalid),
+        .awready   (awready),
+        .wdata     (frm_wdata),
+        .wstrb     (frm_wstrb),
+        .wlast     (frm_wlast),
+        .wvalid    (frm_wvalid),
+        .wready    (wready),
+        .bresp     (bresp),
+        .bvalid    (bvalid),
+        .bready    (frm_bready),
+        .araddr    (frm_araddr),
+        .arlen     (frm_arlen),
+        .arsize    (frm_arsize),
+        .arburst   (frm_arburst),
+        .arvalid   (frm_arvalid),
+        .arready   (arready),
+        .rdata     (rdata),
+        .rresp     (rresp),
+        .rlast     (rlast),
+        .rvalid    (rvalid),
+        .rready    (frm_rready)
+    );
+
+    assign awaddr  = use_frame ? frm_awaddr  : pat_awaddr;
+    assign awlen   = use_frame ? frm_awlen   : pat_awlen;
+    assign awsize  = use_frame ? frm_awsize  : pat_awsize;
+    assign awburst = use_frame ? frm_awburst : pat_awburst;
+    assign awvalid = use_frame ? frm_awvalid : pat_awvalid;
+    assign wdata   = use_frame ? frm_wdata   : pat_wdata;
+    assign wstrb   = use_frame ? frm_wstrb   : pat_wstrb;
+    assign wlast   = use_frame ? frm_wlast   : pat_wlast;
+    assign wvalid  = use_frame ? frm_wvalid  : pat_wvalid;
+    assign bready  = use_frame ? frm_bready  : pat_bready;
+    assign araddr  = use_frame ? frm_araddr  : pat_araddr;
+    assign arlen   = use_frame ? frm_arlen   : pat_arlen;
+    assign arsize  = use_frame ? frm_arsize  : pat_arsize;
+    assign arburst = use_frame ? frm_arburst : pat_arburst;
+    assign arvalid = use_frame ? frm_arvalid : pat_arvalid;
+    assign rready  = use_frame ? frm_rready  : pat_rready;
 
     always_ff @(posedge clk12) begin
         sync0 <= {raw_pass, raw_done, init_calib_complete};

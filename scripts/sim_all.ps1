@@ -59,6 +59,13 @@ Invoke-Sim "ddr3_pattern_tb" @(
     "sim/ddr3_axi_ram.sv",
     "sim/ddr3_pattern_tb.sv"
 )
+Invoke-Sim "ddr3_link_tb" @(
+    "rtl/cdc_mailbox.sv",
+    "rtl/ddr3_frame.sv",
+    "rtl/ddr3_link.sv",
+    "sim/ddr3_axi_ram.sv",
+    "sim/ddr3_link_tb.sv"
+)
 Invoke-Sim "proto_parser_tb" @(
     "rtl/proto_parser.sv",
     "sim/proto_parser_tb.sv"

@@ -19,6 +19,9 @@ add_files [list \
     [file join $root rtl motion_box.sv] \
     [file join $root rtl bg_frame.sv] \
     [file join $root rtl ddr3_pattern.sv] \
+    [file join $root rtl cdc_mailbox.sv] \
+    [file join $root rtl ddr3_frame.sv] \
+    [file join $root rtl ddr3_link.sv] \
     [file join $root rtl ddr3_board.sv] \
     [file join $root rtl arty_s7_uart_top.sv] \
 ]

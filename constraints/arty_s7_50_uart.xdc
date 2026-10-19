@@ -32,5 +32,6 @@ set_property INTERNAL_VREF 0.675 [get_iobanks 34]
 
 # The DDR user clock and the 12 MHz UART clock are unrelated. The only
 # crossing is the first flop of the synchronizer that copies the memory-test
-# result. XDC cannot use Tcl if/else, so this is a plain false path.
+# result, plus the mailboxes that carry a received frame into DDR.
 set_false_path -to [get_cells {u_ddr/sync0_reg[*]}]
+set_false_path -to [get_cells -hier -filter {NAME =~ *cdc_sync*_reg*}]

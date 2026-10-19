@@ -39,6 +39,7 @@ module arty_s7_uart_top #(
     localparam logic [7:0] MOTION_CMD = 8'h4D;
     localparam logic [7:0] BG_CMD = 8'h42;
     localparam logic [7:0] DDR_CMD = 8'h44;
+    localparam logic [7:0] DDR_FRAME_CMD = 8'h46;
     localparam logic [7:0] READBACK_SYNC = 8'hD3;
     localparam logic [7:0] MOTION_SYNC = 8'hD4;
     localparam logic [7:0] BG_SYNC = 8'hD5;
@@ -132,6 +133,17 @@ module arty_s7_uart_top #(
     logic ddr_reply_pending;
     logic ddr_reply_index;
     logic [7:0] ddr_reply_byte;
+    logic ddr_stream;
+    logic copy_start;
+    logic copy_busy;
+    logic copy_rd_en;
+    logic [16:0] copy_rd_addr;
+    logic [7:0] copy_byte;
+    logic copy_valid;
+    logic copy_last;
+    logic copy_take;
+    logic ddr_hold_valid;
+    logic ddr_hold_last;
     logic ddr_calib;
     logic ddr_done;
     logic ddr_pass;
@@ -281,9 +293,12 @@ module arty_s7_uart_top #(
     // the port once it starts.
     wire motion_issue = mem_we && !readback_active && !bg_busy;
     wire bg_owns_read = bg_busy;
+    wire ddr_owns_read = copy_busy;
     assign rd_en   = bg_owns_read ? bg_rd_en
-        : (motion_issue ? 1'b1 : (filter_mode ? issue_read : readback_active));
+        : ddr_owns_read ? copy_rd_en
+        : (motion_issue ? 1'b1 : (filter_mode ? issue_read : (readback_active && !ddr_stream)));
     assign rd_addr = bg_owns_read ? bg_rd_addr
+        : ddr_owns_read ? copy_rd_addr
         : (motion_issue ? mem_addr : (filter_mode ? feed_addr : readback_addr));
 
     bg_frame #(.FRAME_BYTES(READBACK_BYTES)) u_bg (
@@ -326,6 +341,16 @@ module arty_s7_uart_top #(
     ddr3_board u_ddr (
         .clk12       (CLK12MHZ),
         .clk100      (clk100),
+        .rst12       (por),
+        .copy_go     (copy_start),
+        .copy_busy   (copy_busy),
+        .copy_rd_en  (copy_rd_en),
+        .copy_rd_addr(copy_rd_addr),
+        .copy_rd_data(rd_data),
+        .copy_byte   (copy_byte),
+        .copy_valid  (copy_valid),
+        .copy_last   (copy_last),
+        .copy_ready  (copy_take || (!ddr_stream && copy_valid)),
         .calib       (ddr_calib),
         .test_done   (ddr_done),
         .test_pass   (ddr_pass),
@@ -348,7 +373,8 @@ module arty_s7_uart_top #(
 
     wire tx_valid = status_active || beacon_active || motion_active || bg_ack_active ||
         ddr_reply_active ||
-        (readback_active && (!filter_mode || !readback_payload || hold_valid));
+        (readback_active && !ddr_stream && (!filter_mode || !readback_payload || hold_valid)) ||
+        (readback_active && ddr_stream && (!readback_payload || ddr_hold_valid));
 
     img_threshold u_threshold (
         .clk       (CLK12MHZ),
@@ -442,10 +468,17 @@ module arty_s7_uart_top #(
             ddr_reply_pending      <= 1'b0;
             ddr_reply_index        <= 1'b0;
             ddr_reply_byte         <= 8'd0;
+            ddr_stream             <= 1'b0;
+            copy_start             <= 1'b0;
+            copy_take              <= 1'b0;
+            ddr_hold_valid         <= 1'b0;
+            ddr_hold_last          <= 1'b0;
         end
         else begin
             command_error_suppress <= 1'b0;
             bg_start               <= 1'b0;
+            copy_start             <= 1'b0;
+            copy_take              <= 1'b0;
             session_reset          <= 1'b0;
             filter_clear           <= 1'b0;
             filter_pop             <= 1'b0;
@@ -497,6 +530,8 @@ module arty_s7_uart_top #(
                     motion_pending         <= 1'b0;
                     bg_ack_pending         <= 1'b0;
                     ddr_reply_pending      <= 1'b0;
+                    ddr_stream             <= 1'b0;
+                    ddr_hold_valid         <= 1'b0;
                     error_latch            <= 7'd0;
                 end
                 else if (parser_idle && frame_complete && !bg_busy &&
@@ -513,6 +548,17 @@ module arty_s7_uart_top #(
                     command_error_suppress <= 1'b1;
                     ddr_reply_pending      <= 1'b1;
                     ddr_reply_byte         <= {5'd0, ddr_pass, ddr_done, ddr_calib};
+                end
+                else if (parser_idle && frame_complete && !bg_busy &&
+                         !readback_active && !readback_pending &&
+                         !motion_active && !motion_pending &&
+                         !copy_busy && !ddr_stream &&
+                         rx_data == DDR_FRAME_CMD) begin
+                    command_error_suppress <= 1'b1;
+                    readback_pending       <= 1'b1;
+                    readback_mode          <= 2'd0;
+                    ddr_stream             <= 1'b1;
+                    copy_start             <= 1'b1;
                 end
             end
             else if (activity_count != 0)
@@ -613,7 +659,8 @@ module arty_s7_uart_top #(
             end
             else if (!status_active && !beacon_active && !readback_active &&
                      !motion_active && !bg_ack_active && !ddr_reply_active &&
-                     !bg_busy && !status_pending && !readback_pending &&
+                     !bg_busy && !copy_busy && !ddr_stream &&
+                     !status_pending && !readback_pending &&
                      !motion_pending && !bg_ack_pending && !ddr_reply_pending &&
                      beacon_tick) begin
                 beacon_active <= 1'b1;
@@ -698,7 +745,10 @@ module arty_s7_uart_top #(
             else if (readback_active && tx_ready && !readback_payload) begin
                 if (readback_header_index == 3'd5) begin
                     readback_payload <= 1'b1;
-                    if (!filter_mode)
+                    if (ddr_stream) begin
+                        // The DDR byte is loaded once readback_payload is set.
+                    end
+                    else if (!filter_mode)
                         tx_data <= rd_data;
                     else if (filter_valid) begin
                         hold_valid <= 1'b1;
@@ -716,6 +766,21 @@ module arty_s7_uart_top #(
                         3'd3: tx_data <= readback_length[15:8];
                         default: tx_data <= readback_length[23:16];
                     endcase
+                end
+            end
+            else if (readback_active && readback_payload && ddr_stream) begin
+                if (tx_ready && ddr_hold_valid) begin
+                    ddr_hold_valid <= 1'b0;
+                    if (ddr_hold_last) begin
+                        readback_active <= 1'b0;
+                        ddr_stream      <= 1'b0;
+                    end
+                end
+                else if (!ddr_hold_valid && copy_valid) begin
+                    ddr_hold_valid <= 1'b1;
+                    ddr_hold_last  <= copy_last;
+                    tx_data        <= copy_byte;
+                    copy_take      <= 1'b1;
                 end
             end
             else if (readback_active && tx_ready && readback_payload && !filter_mode) begin
@@ -745,7 +810,7 @@ module arty_s7_uart_top #(
 
             // frame_mem is synchronous. Two clocks after changing rd_addr,
             // rd_data contains the next pixel; copy it while UART is busy.
-            if (!filter_mode && readback_prefetch != 0) begin
+            if (!filter_mode && !ddr_stream && readback_prefetch != 0) begin
                 readback_prefetch <= readback_prefetch - 2'd1;
                 if (readback_prefetch == 2'd1)
                     tx_data <= rd_data;

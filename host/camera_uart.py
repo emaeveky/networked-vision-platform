@@ -88,9 +88,9 @@ def main() -> None:
     )
     parser.add_argument(
         "--process",
-        choices=("raw", "threshold", "sobel", "motion"),
+        choices=("raw", "threshold", "sobel", "motion", "ddr"),
         default="raw",
-        help="FPGA result: raw, threshold, or sobel pixels, or a motion box",
+        help="FPGA result: raw, threshold, sobel, the DDR copy, or a motion box",
     )
     parser.add_argument(
         "--lock-background",

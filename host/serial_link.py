@@ -17,6 +17,8 @@ SESSION_RESET_CMD = 0x53
 MOTION_CMD = 0x4D
 BG_CMD = 0x42
 BG_SYNC = 0xD5
+DDR_CMD = 0x44
+DDR_SYNC = 0xD6
 READBACK_COMMANDS = {
     "raw": READBACK_CMD,
     "threshold": THRESHOLD_CMD,
@@ -200,6 +202,28 @@ def capture_background(link) -> bool:
             if not rest:
                 return False
     return False
+
+
+def read_ddr_status(link) -> tuple[bool, bool, bool] | None:
+    """Ask whether the DDR3 frame test has calibrated, finished, and passed.
+
+    Returns calib, done, passed. The test runs by itself after configuration.
+    """
+    link.reset_input_buffer()
+    link.write(bytes([DDR_CMD]))
+    link.flush()
+
+    deadline = time.monotonic() + float(getattr(link, "timeout", 8.0) or 8.0)
+    while time.monotonic() < deadline:
+        first = link.read(1)
+        if not first:
+            return None
+        if first[0] == DDR_SYNC:
+            rest = link.read(1)
+            if not rest:
+                return None
+            return bool(rest[0] & 1), bool(rest[0] & 2), bool(rest[0] & 4)
+    return None
 
 
 def read_motion(link) -> MotionBox | None:

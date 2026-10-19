@@ -8,10 +8,26 @@ module arty_s7_uart_top #(
     parameter int FRAME_H = 240
 ) (
     input  logic       CLK12MHZ,
+    input  logic       clk100 = 1'b0,
     input  logic [3:0] btn,
     input  logic       uart_txd_in,
     output logic       uart_rxd_out,
-    output logic [3:0] led
+    output logic [3:0] led,
+    inout  wire [15:0] ddr3_dq,
+    inout  wire [1:0]  ddr3_dqs_n,
+    inout  wire [1:0]  ddr3_dqs_p,
+    output wire [13:0] ddr3_addr,
+    output wire [2:0]  ddr3_ba,
+    output wire        ddr3_ras_n,
+    output wire        ddr3_cas_n,
+    output wire        ddr3_we_n,
+    output wire        ddr3_reset_n,
+    output wire [0:0]  ddr3_ck_p,
+    output wire [0:0]  ddr3_ck_n,
+    output wire [0:0]  ddr3_cke,
+    output wire [0:0]  ddr3_cs_n,
+    output wire [1:0]  ddr3_dm,
+    output wire [0:0]  ddr3_odt
 );
 
     localparam int CLOCK_HZ = 12_000_000;
@@ -22,9 +38,11 @@ module arty_s7_uart_top #(
     localparam logic [7:0] SESSION_RESET_CMD = 8'h53;
     localparam logic [7:0] MOTION_CMD = 8'h4D;
     localparam logic [7:0] BG_CMD = 8'h42;
+    localparam logic [7:0] DDR_CMD = 8'h44;
     localparam logic [7:0] READBACK_SYNC = 8'hD3;
     localparam logic [7:0] MOTION_SYNC = 8'hD4;
     localparam logic [7:0] BG_SYNC = 8'hD5;
+    localparam logic [7:0] DDR_SYNC = 8'hD6;
     localparam int SOBEL_BYTES = (FRAME_W - 2) * (FRAME_H - 2);
     // After a bad CRC, wait until the host has stopped sending before reporting
     // the final packet count. One millisecond is far longer than the gap
@@ -110,6 +128,13 @@ module arty_s7_uart_top #(
     logic bg_ack_active;
     logic bg_ack_pending;
     logic bg_ack_index;
+    logic ddr_reply_active;
+    logic ddr_reply_pending;
+    logic ddr_reply_index;
+    logic [7:0] ddr_reply_byte;
+    logic ddr_calib;
+    logic ddr_done;
+    logic ddr_pass;
     logic bg_busy;
     logic bg_armed;
     logic bg_done;
@@ -298,7 +323,31 @@ module arty_s7_uart_top #(
 
     // Hold a processed pixel until the UART actually accepts it. Keeping
     // tx_valid low while the filter catches up prevents a repeated byte.
+    ddr3_board u_ddr (
+        .clk12       (CLK12MHZ),
+        .clk100      (clk100),
+        .calib       (ddr_calib),
+        .test_done   (ddr_done),
+        .test_pass   (ddr_pass),
+        .ddr3_dq     (ddr3_dq),
+        .ddr3_dqs_n  (ddr3_dqs_n),
+        .ddr3_dqs_p  (ddr3_dqs_p),
+        .ddr3_addr   (ddr3_addr),
+        .ddr3_ba     (ddr3_ba),
+        .ddr3_ras_n  (ddr3_ras_n),
+        .ddr3_cas_n  (ddr3_cas_n),
+        .ddr3_we_n   (ddr3_we_n),
+        .ddr3_reset_n(ddr3_reset_n),
+        .ddr3_ck_p   (ddr3_ck_p),
+        .ddr3_ck_n   (ddr3_ck_n),
+        .ddr3_cke    (ddr3_cke),
+        .ddr3_cs_n   (ddr3_cs_n),
+        .ddr3_dm     (ddr3_dm),
+        .ddr3_odt    (ddr3_odt)
+    );
+
     wire tx_valid = status_active || beacon_active || motion_active || bg_ack_active ||
+        ddr_reply_active ||
         (readback_active && (!filter_mode || !readback_payload || hold_valid));
 
     img_threshold u_threshold (
@@ -389,6 +438,10 @@ module arty_s7_uart_top #(
             bg_ack_active          <= 1'b0;
             bg_ack_pending         <= 1'b0;
             bg_ack_index           <= 1'b0;
+            ddr_reply_active       <= 1'b0;
+            ddr_reply_pending      <= 1'b0;
+            ddr_reply_index        <= 1'b0;
+            ddr_reply_byte         <= 8'd0;
         end
         else begin
             command_error_suppress <= 1'b0;
@@ -443,6 +496,7 @@ module arty_s7_uart_top #(
                     readback_pending       <= 1'b0;
                     motion_pending         <= 1'b0;
                     bg_ack_pending         <= 1'b0;
+                    ddr_reply_pending      <= 1'b0;
                     error_latch            <= 7'd0;
                 end
                 else if (parser_idle && frame_complete && !bg_busy &&
@@ -451,6 +505,14 @@ module arty_s7_uart_top #(
                          rx_data == BG_CMD) begin
                     command_error_suppress <= 1'b1;
                     bg_start               <= 1'b1;
+                end
+                else if (parser_idle && !bg_busy &&
+                         !readback_active && !readback_pending &&
+                         !motion_active && !motion_pending &&
+                         rx_data == DDR_CMD) begin
+                    command_error_suppress <= 1'b1;
+                    ddr_reply_pending      <= 1'b1;
+                    ddr_reply_byte         <= {5'd0, ddr_pass, ddr_done, ddr_calib};
                 end
             end
             else if (activity_count != 0)
@@ -493,7 +555,8 @@ module arty_s7_uart_top #(
                 crc_fail_seen <= 1'b1;
 
             if (!status_active && !beacon_active && !readback_active &&
-                !motion_active && !bg_ack_active && status_pending) begin
+                !motion_active && !bg_ack_active && !ddr_reply_active &&
+                status_pending) begin
                 status_active  <= 1'b1;
                 status_pending <= 1'b0;
                 status_index   <= 3'd0;
@@ -502,7 +565,7 @@ module arty_s7_uart_top #(
                 error_latch    <= 7'd0;
             end
             else if (!status_active && !beacon_active && !readback_active &&
-                     !motion_active && !bg_ack_active &&
+                     !motion_active && !bg_ack_active && !ddr_reply_active &&
                      !status_pending && readback_pending) begin
                 readback_active       <= 1'b1;
                 readback_pending      <= 1'b0;
@@ -523,7 +586,7 @@ module arty_s7_uart_top #(
                 tx_data               <= READBACK_SYNC;
             end
             else if (!status_active && !beacon_active && !readback_active &&
-                     !motion_active && !bg_ack_active &&
+                     !motion_active && !bg_ack_active && !ddr_reply_active &&
                      !status_pending && !readback_pending &&
                      motion_pending) begin
                 motion_active  <= 1'b1;
@@ -540,9 +603,19 @@ module arty_s7_uart_top #(
                 tx_data        <= BG_SYNC;
             end
             else if (!status_active && !beacon_active && !readback_active &&
-                     !motion_active && !bg_ack_active && !bg_busy &&
+                     !motion_active && !bg_ack_active &&
                      !status_pending && !readback_pending &&
-                     !motion_pending && !bg_ack_pending && beacon_tick) begin
+                     !motion_pending && !bg_ack_pending && ddr_reply_pending) begin
+                ddr_reply_active  <= 1'b1;
+                ddr_reply_pending <= 1'b0;
+                ddr_reply_index   <= 1'b0;
+                tx_data           <= DDR_SYNC;
+            end
+            else if (!status_active && !beacon_active && !readback_active &&
+                     !motion_active && !bg_ack_active && !ddr_reply_active &&
+                     !bg_busy && !status_pending && !readback_pending &&
+                     !motion_pending && !bg_ack_pending && !ddr_reply_pending &&
+                     beacon_tick) begin
                 beacon_active <= 1'b1;
                 beacon_index  <= 2'd0;
                 tx_data       <= 8'hE7;
@@ -602,6 +675,15 @@ module arty_s7_uart_top #(
                 else begin
                     bg_ack_index <= 1'b1;
                     tx_data      <= 8'h01;
+                end
+            end
+            else if (ddr_reply_active && tx_ready) begin
+                if (ddr_reply_index) begin
+                    ddr_reply_active <= 1'b0;
+                end
+                else begin
+                    ddr_reply_index <= 1'b1;
+                    tx_data         <= ddr_reply_byte;
                 end
             end
             else if (beacon_active && tx_ready) begin

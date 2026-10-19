@@ -60,7 +60,7 @@ module uart_readback_tb;
         // distinctive pattern; ingress/storage correctness is covered by
         // vision_core_tb.
         for (i = 0; i < TEST_BYTES; i++)
-            dut.u_core.u_mem.bank0[i] = 8'((i * 13) ^ 8'hA7);
+            dut.u_core.u_mem.poke(0, i, 8'((i * 13) ^ 8'hA7));
 
         repeat (20) @(posedge clk);
         btn = 4'b0000;

@@ -83,8 +83,8 @@ module uart_sobel_wide_tb;
         for (i = 0; i < PIXELS; i++)
             image[i] = (i * 17 + 9) & 8'hFF;
         for (i = 0; i < PIXELS; i++) begin
-            dut.u_core.u_mem.bank0[i] = image[i];
-            dut.u_core.u_mem.bank1[i] = image[i];
+            dut.u_core.u_mem.poke(0, i, image[i]);
+            dut.u_core.u_mem.poke(1, i, image[i]);
         end
 
         repeat (20) @(posedge clk);

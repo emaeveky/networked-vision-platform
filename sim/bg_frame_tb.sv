@@ -21,7 +21,7 @@ module bg_frame_tb;
     reg [7:0] picture [0:N-1];
     logic [7:0] rd_data_q;
 
-    bg_frame #(.FRAME_BYTES(N)) dut (
+    bg_frame #(.FRAME_BYTES(N), .CHUNK(N)) dut (
         .clk         (clk),
         .rst         (rst),
         .start       (start),

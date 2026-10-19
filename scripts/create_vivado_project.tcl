@@ -18,11 +18,26 @@ add_files [list \
     [file join $root rtl img_sobel.sv] \
     [file join $root rtl motion_box.sv] \
     [file join $root rtl bg_frame.sv] \
+    [file join $root rtl ddr3_pattern.sv] \
+    [file join $root rtl ddr3_board.sv] \
     [file join $root rtl arty_s7_uart_top.sv] \
 ]
+set_property file_type SystemVerilog [get_files *.sv]
+
+create_ip -name clk_wiz -vendor xilinx.com -library ip -module_name clk_wiz_200
+set_property -dict [list \
+    CONFIG.PRIM_IN_FREQ {12.000} \
+    CONFIG.CLKOUT1_REQUESTED_OUT_FREQ {200.000} \
+    CONFIG.USE_RESET {false} \
+    CONFIG.USE_LOCKED {true} \
+] [get_ips clk_wiz_200]
+
+create_ip -name mig_7series -vendor xilinx.com -library ip -module_name mig_arty
+set_property CONFIG.XML_INPUT_FILE [file normalize [file join $root ip arty_s7_50_mig.prj]] [get_ips mig_arty]
+generate_target all [get_ips clk_wiz_200]
+generate_target all [get_ips mig_arty]
 add_files -fileset constrs_1 [file join $root constraints arty_s7_50_uart.xdc]
 
-set_property file_type SystemVerilog [get_files *.sv]
 set_property top arty_s7_uart_top [get_filesets sources_1]
 set_property top_auto_set 0 [get_filesets sources_1]
 

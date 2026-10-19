@@ -71,9 +71,10 @@ module motion_pipe_tb;
         latch    = 1'b0;
         curr_pix = 8'd0;
         addr     = 17'd0;
-        for (i = 0; i < 76800; i++)
-            mem.bank1[i] = 8'd0;
-        mem.bank1[20 * WIDTH + 12] = 8'd100;
+        mem.poke(1, 20 * WIDTH + 10, 8'd0);
+        mem.poke(1, 20 * WIDTH + 11, 8'd0);
+        mem.poke(1, 20 * WIDTH + 12, 8'd100);
+        mem.poke(1, 0, 8'd0);
         repeat (2) @(posedge clk);
         #1;
         rst = 1'b0;

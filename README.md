@@ -39,6 +39,7 @@ Implemented, simulated, and exercised on the Arty S7-50:
 - full 320x240 reconstruction into a two-bank frame memory
 - UART readback of the completed display bank with a byte-for-byte host check
 - explicit host-session reset and diagnostic idle beacon
+- DDR3 self-test: after calibration, one 320x240 frame is written and read back (command `0x44`)
 
 Python host tools generate the same 64-packet frames, assemble them, and provide threshold/Sobel golden models.
 
@@ -151,7 +152,7 @@ official Digilent pins: 12 MHz clock F14, FTDI RX/TX V12/R12, buttons, and LEDs.
 4. Read raw frame-buffer pixels back and verify them (complete)
 5. Route threshold and Sobel into hardware readback (raw, threshold, and Sobel verified on the board)
 6. Check payload CRC32 before a packet counts (verified: bad CRC reports `payload_error` and keeps the previous frame)
-7. DDR3 frame buffers and higher-resolution frames
+7. DDR3 frame buffers and higher-resolution frames (controller verified on the board: calibration complete, one 320x240 frame matched. The UART pipeline still stores frames in block RAM.)
 8. Real Ethernet / GigE Vision on PHY-equipped hardware
 9. Optional direct display hardware
 

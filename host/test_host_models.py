@@ -5,12 +5,15 @@ from packet_codec import FRAME_BYTES, PACKET_BYTES, PACKETS_PER_FRAME, assemble_
 from serial_link import (
     BG_CMD,
     BG_SYNC,
+    DDR_CMD,
+    DDR_SYNC,
     MOTION_CMD,
     MOTION_SYNC,
     READBACK_CMD,
     READBACK_SYNC,
     STATUS_SYNC,
     capture_background,
+    read_ddr_status,
     decode_status,
     encode_frame,
     read_frame,
@@ -169,6 +172,13 @@ class PacketCodecTests(unittest.TestCase):
         self.assertTrue(capture_background(link))
         self.assertEqual(link.written, bytes([BG_CMD]))
         self.assertFalse(capture_background(FakeSerial(bytes([0xE7, 0xC0]))))
+
+    def test_ddr_status_decode(self) -> None:
+        waiting = FakeSerial(bytes([0xE7, 0xC0, 0x80, DDR_SYNC, 0x01]))
+        self.assertEqual(read_ddr_status(waiting), (True, False, False))
+        self.assertEqual(waiting.written, bytes([DDR_CMD]))
+        passed = FakeSerial(bytes([DDR_SYNC, 0x07]))
+        self.assertEqual(read_ddr_status(passed), (True, True, True))
 
 
 if __name__ == "__main__":

@@ -40,6 +40,11 @@ module arty_s7_uart_top #(
     localparam logic [7:0] BG_CMD = 8'h42;
     localparam logic [7:0] DDR_CMD = 8'h44;
     localparam logic [7:0] DDR_FRAME_CMD = 8'h46;
+    localparam logic [7:0] WIDE_ARM_CMD = 8'h57;
+    localparam logic [7:0] WIDE_READ_CMD = 8'h58;
+    localparam logic [7:0] WIDE_ARM_SYNC = 8'hD7;
+    localparam logic [7:0] WIDE_DONE_SYNC = 8'hD8;
+    localparam int WIDE_BYTES = 640 * 480;
     localparam logic [7:0] READBACK_SYNC = 8'hD3;
     localparam logic [7:0] MOTION_SYNC = 8'hD4;
     localparam logic [7:0] BG_SYNC = 8'hD5;
@@ -57,6 +62,7 @@ module arty_s7_uart_top #(
     logic hdr_valid;
     logic [15:0] frame_id;
     logic [5:0] packet_id;
+    logic [7:0] packet_id_full;
     logic [10:0] payload_len;
     logic data_valid;
     logic [7:0] data;
@@ -144,6 +150,32 @@ module arty_s7_uart_top #(
     logic copy_take;
     logic ddr_hold_valid;
     logic ddr_hold_last;
+    logic wide_arm;
+    logic wide_read;
+    logic [255:0] wide_map;
+    logic [8:0] wide_count;
+    logic [7:0] wide_pid;
+    logic [18:0] wide_base;
+    logic [10:0] wide_idx;
+    logic [15:0] wide_fid;
+    logic wide_crc_bad;
+    logic wide_done_latched;
+    logic wide_ack_pending;
+    logic wide_ack_active;
+    logic wide_ack_index;
+    logic wide_done_pending;
+    logic wide_done_active;
+    logic [2:0] wide_done_index;
+    logic sink_byte_valid;
+    logic [7:0] sink_byte_r;
+    logic [18:0] sink_byte_addr;
+    logic sink_write_idle;
+    logic sink_read_go;
+    logic [7:0] sink_out_byte;
+    logic sink_out_valid;
+    logic sink_out_last;
+    logic sink_busy;
+    logic sink_take;
     logic ddr_calib;
     logic ddr_done;
     logic ddr_pass;
@@ -227,10 +259,12 @@ module arty_s7_uart_top #(
         .rst         (core_rst),
         .rx_valid    (rx_valid),
         .rx_data     (rx_data),
+        .wide_ok     (wide_arm),
         .rx_ready    (),
         .hdr_valid   (hdr_valid),
         .frame_id    (frame_id),
         .packet_id   (packet_id),
+        .packet_id_full (packet_id_full),
         .payload_len (payload_len),
         .data_valid  (data_valid),
         .data        (data),
@@ -247,15 +281,15 @@ module arty_s7_uart_top #(
         .clk                 (CLK12MHZ),
         .rst                 (core_rst),
         .swap_ready          (1'b1),
-        .hdr_valid           (hdr_valid),
+        .hdr_valid           (hdr_valid && !wide_arm),
         .frame_id            (frame_id),
         .packet_id           (packet_id),
         .payload_len         (payload_len),
-        .data_valid          (data_valid),
+        .data_valid          (data_valid && !wide_arm),
         .data                (data),
         .data_last           (data_last),
-        .crc_ok              (crc_ok),
-        .crc_error           (crc_error),
+        .crc_ok              (crc_ok && !wide_arm),
+        .crc_error           (crc_error && !wide_arm),
         .rd_en               (rd_en),
         .rd_addr             (rd_addr),
         .rd_data             (rd_data),
@@ -351,6 +385,16 @@ module arty_s7_uart_top #(
         .copy_valid  (copy_valid),
         .copy_last   (copy_last),
         .copy_ready  (copy_take || (!ddr_stream && copy_valid)),
+        .sink_byte_valid (sink_byte_valid),
+        .sink_byte   (sink_byte_r),
+        .sink_byte_addr (sink_byte_addr),
+        .sink_write_idle (sink_write_idle),
+        .sink_read_go (sink_read_go),
+        .sink_out_byte (sink_out_byte),
+        .sink_out_valid (sink_out_valid),
+        .sink_out_last (sink_out_last),
+        .sink_out_ready (sink_take || (!wide_read && sink_out_valid)),
+        .sink_busy   (sink_busy),
         .calib       (ddr_calib),
         .test_done   (ddr_done),
         .test_pass   (ddr_pass),
@@ -371,8 +415,12 @@ module arty_s7_uart_top #(
         .ddr3_odt    (ddr3_odt)
     );
 
+    wire [7:0] stream_byte = wide_read ? sink_out_byte : copy_byte;
+    wire stream_valid = wide_read ? sink_out_valid : copy_valid;
+    wire stream_last = wide_read ? sink_out_last : copy_last;
+
     wire tx_valid = status_active || beacon_active || motion_active || bg_ack_active ||
-        ddr_reply_active ||
+        ddr_reply_active || wide_ack_active || wide_done_active ||
         (readback_active && !ddr_stream && (!filter_mode || !readback_payload || hold_valid)) ||
         (readback_active && ddr_stream && (!readback_payload || ddr_hold_valid));
 
@@ -473,12 +521,34 @@ module arty_s7_uart_top #(
             copy_take              <= 1'b0;
             ddr_hold_valid         <= 1'b0;
             ddr_hold_last          <= 1'b0;
+            wide_arm               <= 1'b0;
+            wide_read              <= 1'b0;
+            wide_map               <= '0;
+            wide_count             <= 9'd0;
+            wide_pid               <= 8'd0;
+            wide_base              <= 19'd0;
+            wide_idx               <= 11'd0;
+            wide_fid               <= 16'd0;
+            wide_crc_bad           <= 1'b0;
+            wide_done_latched      <= 1'b0;
+            wide_ack_pending       <= 1'b0;
+            wide_ack_active        <= 1'b0;
+            wide_ack_index         <= 1'b0;
+            wide_done_pending      <= 1'b0;
+            wide_done_active       <= 1'b0;
+            wide_done_index        <= 3'd0;
+            sink_byte_valid        <= 1'b0;
+            sink_read_go           <= 1'b0;
+            sink_take              <= 1'b0;
         end
         else begin
             command_error_suppress <= 1'b0;
             bg_start               <= 1'b0;
             copy_start             <= 1'b0;
             copy_take              <= 1'b0;
+            sink_byte_valid        <= 1'b0;
+            sink_read_go           <= 1'b0;
+            sink_take              <= 1'b0;
             session_reset          <= 1'b0;
             filter_clear           <= 1'b0;
             filter_pop             <= 1'b0;
@@ -532,6 +602,14 @@ module arty_s7_uart_top #(
                     ddr_reply_pending      <= 1'b0;
                     ddr_stream             <= 1'b0;
                     ddr_hold_valid         <= 1'b0;
+                    wide_arm               <= 1'b0;
+                    wide_read              <= 1'b0;
+                    wide_map               <= '0;
+                    wide_count             <= 9'd0;
+                    wide_crc_bad           <= 1'b0;
+                    wide_done_latched      <= 1'b0;
+                    wide_ack_pending       <= 1'b0;
+                    wide_done_pending      <= 1'b0;
                     error_latch            <= 7'd0;
                 end
                 else if (parser_idle && frame_complete && !bg_busy &&
@@ -552,13 +630,39 @@ module arty_s7_uart_top #(
                 else if (parser_idle && frame_complete && !bg_busy &&
                          !readback_active && !readback_pending &&
                          !motion_active && !motion_pending &&
-                         !copy_busy && !ddr_stream &&
+                         !copy_busy && !ddr_stream && !wide_arm &&
                          rx_data == DDR_FRAME_CMD) begin
                     command_error_suppress <= 1'b1;
                     readback_pending       <= 1'b1;
                     readback_mode          <= 2'd0;
                     ddr_stream             <= 1'b1;
                     copy_start             <= 1'b1;
+                end
+                else if (parser_idle && !bg_busy && !copy_busy &&
+                         !readback_active && !readback_pending &&
+                         !motion_active && !motion_pending &&
+                         !ddr_stream && !wide_read && ddr_done &&
+                         rx_data == WIDE_ARM_CMD) begin
+                    command_error_suppress <= 1'b1;
+                    wide_arm               <= 1'b1;
+                    wide_map               <= '0;
+                    wide_count             <= 9'd0;
+                    wide_crc_bad           <= 1'b0;
+                    wide_done_latched      <= 1'b0;
+                    wide_ack_pending       <= 1'b1;
+                end
+                else if (parser_idle && wide_done_latched && sink_write_idle &&
+                         !sink_busy && !copy_busy &&
+                         !readback_active && !readback_pending &&
+                         !motion_active && !motion_pending &&
+                         !ddr_stream &&
+                         rx_data == WIDE_READ_CMD) begin
+                    command_error_suppress <= 1'b1;
+                    readback_pending       <= 1'b1;
+                    readback_mode          <= 2'd0;
+                    ddr_stream             <= 1'b1;
+                    wide_read              <= 1'b1;
+                    sink_read_go           <= 1'b1;
                 end
             end
             else if (activity_count != 0)
@@ -597,8 +701,32 @@ module arty_s7_uart_top #(
             if ((rx_valid && parser_idle && rx_data == SESSION_RESET_CMD) ||
                 swap_pulse || crc_status_fire)
                 crc_fail_seen <= 1'b0;
-            else if (crc_error)
+            else if (crc_error && !wide_arm)
                 crc_fail_seen <= 1'b1;
+
+            if (wide_arm && hdr_valid) begin
+                wide_pid  <= packet_id_full;
+                wide_base <= 19'(packet_id_full) * 19'd1200;
+                wide_idx  <= 11'd0;
+                if (wide_count == 9'd0)
+                    wide_fid <= frame_id;
+            end
+            if (wide_arm && data_valid) begin
+                sink_byte_valid <= 1'b1;
+                sink_byte_r     <= data;
+                sink_byte_addr  <= wide_base + 19'(wide_idx);
+                wide_idx        <= wide_idx + 11'd1;
+            end
+            if (wide_arm && crc_ok && !wide_map[wide_pid]) begin
+                wide_map[wide_pid] <= 1'b1;
+                wide_count         <= wide_count + 9'd1;
+            end
+            if (wide_arm && crc_error)
+                wide_crc_bad <= 1'b1;
+            if (wide_arm && wide_count == 9'd256 && sink_write_idle && !wide_done_latched) begin
+                wide_done_pending <= 1'b1;
+                wide_done_latched <= 1'b1;
+            end
 
             if (!status_active && !beacon_active && !readback_active &&
                 !motion_active && !bg_ack_active && !ddr_reply_active &&
@@ -619,9 +747,9 @@ module arty_s7_uart_top #(
                 readback_header_index <= 3'd0;
                 readback_addr         <= 17'd0;
                 readback_prefetch     <= 2'd0;
-                readback_frame_id     <= current_frame_id;
-                readback_length       <= (readback_mode == 2'd2)
-                    ? 24'(SOBEL_BYTES) : 24'(READBACK_BYTES);
+                readback_frame_id     <= wide_read ? wide_fid : current_frame_id;
+                readback_length       <= wide_read ? 24'(WIDE_BYTES)
+                    : ((readback_mode == 2'd2) ? 24'(SOBEL_BYTES) : 24'(READBACK_BYTES));
                 filter_clear          <= (readback_mode != 2'd0);
                 feed_capture          <= 1'b0;
                 feed_hold             <= 1'b0;
@@ -659,6 +787,28 @@ module arty_s7_uart_top #(
             end
             else if (!status_active && !beacon_active && !readback_active &&
                      !motion_active && !bg_ack_active && !ddr_reply_active &&
+                     !wide_ack_active && !wide_done_active &&
+                     !status_pending && !readback_pending &&
+                     wide_ack_pending) begin
+                wide_ack_active  <= 1'b1;
+                wide_ack_pending <= 1'b0;
+                wide_ack_index   <= 1'b0;
+                tx_data          <= WIDE_ARM_SYNC;
+            end
+            else if (!status_active && !beacon_active && !readback_active &&
+                     !motion_active && !bg_ack_active && !ddr_reply_active &&
+                     !wide_ack_active && !wide_done_active &&
+                     !status_pending && !readback_pending &&
+                     !wide_ack_pending && wide_done_pending) begin
+                wide_done_active  <= 1'b1;
+                wide_done_pending <= 1'b0;
+                wide_done_index   <= 3'd0;
+                tx_data           <= WIDE_DONE_SYNC;
+            end
+            else if (!status_active && !beacon_active && !readback_active &&
+                     !motion_active && !bg_ack_active && !ddr_reply_active &&
+                     !wide_ack_active && !wide_done_active &&
+                     !wide_ack_pending && !wide_done_pending &&
                      !bg_busy && !copy_busy && !ddr_stream &&
                      !status_pending && !readback_pending &&
                      !motion_pending && !bg_ack_pending && !ddr_reply_pending &&
@@ -733,6 +883,30 @@ module arty_s7_uart_top #(
                     tx_data         <= ddr_reply_byte;
                 end
             end
+            else if (wide_ack_active && tx_ready) begin
+                if (wide_ack_index) begin
+                    wide_ack_active <= 1'b0;
+                end
+                else begin
+                    wide_ack_index <= 1'b1;
+                    tx_data        <= 8'h01;
+                end
+            end
+            else if (wide_done_active && tx_ready) begin
+                if (wide_done_index == 3'd5) begin
+                    wide_done_active <= 1'b0;
+                end
+                else begin
+                    wide_done_index <= wide_done_index + 3'd1;
+                    unique case (wide_done_index)
+                        3'd0: tx_data <= wide_fid[7:0];
+                        3'd1: tx_data <= wide_fid[15:8];
+                        3'd2: tx_data <= wide_count[7:0];
+                        3'd3: tx_data <= {7'd0, wide_count[8]};
+                        default: tx_data <= {7'd0, wide_crc_bad};
+                    endcase
+                end
+            end
             else if (beacon_active && tx_ready) begin
                 if (beacon_index == 2'd2) begin
                     beacon_active <= 1'b0;
@@ -774,13 +948,17 @@ module arty_s7_uart_top #(
                     if (ddr_hold_last) begin
                         readback_active <= 1'b0;
                         ddr_stream      <= 1'b0;
+                        wide_read       <= 1'b0;
                     end
                 end
-                else if (!ddr_hold_valid && copy_valid) begin
+                else if (!ddr_hold_valid && stream_valid) begin
                     ddr_hold_valid <= 1'b1;
-                    ddr_hold_last  <= copy_last;
-                    tx_data        <= copy_byte;
-                    copy_take      <= 1'b1;
+                    ddr_hold_last  <= stream_last;
+                    tx_data        <= stream_byte;
+                    if (wide_read)
+                        sink_take <= 1'b1;
+                    else
+                        copy_take <= 1'b1;
                 end
             end
             else if (readback_active && tx_ready && readback_payload && !filter_mode) begin

@@ -15,6 +15,17 @@ module ddr3_board (
     output logic        copy_last,
     input  logic        copy_ready,
 
+    input  logic        sink_byte_valid,
+    input  logic [7:0]  sink_byte,
+    input  logic [18:0] sink_byte_addr,
+    output logic        sink_write_idle,
+    input  logic        sink_read_go,
+    output logic [7:0]  sink_out_byte,
+    output logic        sink_out_valid,
+    output logic        sink_out_last,
+    input  logic        sink_out_ready,
+    output logic        sink_busy,
+
     output logic        calib,
     output logic        test_done,
     output logic        test_pass,
@@ -107,6 +118,24 @@ module ddr3_board (
     logic [1:0]  frm_arburst;
     logic        frm_arvalid;
     logic        frm_rready;
+    logic        use_sink;
+
+    logic [27:0] snk_awaddr;
+    logic [7:0]  snk_awlen;
+    logic [2:0]  snk_awsize;
+    logic [1:0]  snk_awburst;
+    logic        snk_awvalid;
+    logic [127:0] snk_wdata;
+    logic [15:0] snk_wstrb;
+    logic        snk_wlast;
+    logic        snk_wvalid;
+    logic        snk_bready;
+    logic [27:0] snk_araddr;
+    logic [7:0]  snk_arlen;
+    logic [2:0]  snk_arsize;
+    logic [1:0]  snk_arburst;
+    logic        snk_arvalid;
+    logic        snk_rready;
     (* ASYNC_REG = "TRUE" *) logic [2:0] sync0;
     (* ASYNC_REG = "TRUE" *) logic [2:0] sync1;
 
@@ -275,22 +304,67 @@ module ddr3_board (
         .rready    (frm_rready)
     );
 
-    assign awaddr  = use_frame ? frm_awaddr  : pat_awaddr;
-    assign awlen   = use_frame ? frm_awlen   : pat_awlen;
-    assign awsize  = use_frame ? frm_awsize  : pat_awsize;
-    assign awburst = use_frame ? frm_awburst : pat_awburst;
-    assign awvalid = use_frame ? frm_awvalid : pat_awvalid;
-    assign wdata   = use_frame ? frm_wdata   : pat_wdata;
-    assign wstrb   = use_frame ? frm_wstrb   : pat_wstrb;
-    assign wlast   = use_frame ? frm_wlast   : pat_wlast;
-    assign wvalid  = use_frame ? frm_wvalid  : pat_wvalid;
-    assign bready  = use_frame ? frm_bready  : pat_bready;
-    assign araddr  = use_frame ? frm_araddr  : pat_araddr;
-    assign arlen   = use_frame ? frm_arlen   : pat_arlen;
-    assign arsize  = use_frame ? frm_arsize  : pat_arsize;
-    assign arburst = use_frame ? frm_arburst : pat_arburst;
-    assign arvalid = use_frame ? frm_arvalid : pat_arvalid;
-    assign rready  = use_frame ? frm_rready  : pat_rready;
+    ddr3_sink u_sink (
+        .clk_byte    (clk12),
+        .rst_byte    (rst12),
+        .clk_ddr     (ui_clk),
+        .rst_ddr     (ui_rst),
+        .gate        (raw_done),
+        .byte_valid  (sink_byte_valid),
+        .byte_data   (sink_byte),
+        .byte_addr   (sink_byte_addr),
+        .write_idle  (sink_write_idle),
+        .read_go     (sink_read_go),
+        .out_byte    (sink_out_byte),
+        .out_valid   (sink_out_valid),
+        .out_last    (sink_out_last),
+        .out_ready   (sink_out_ready),
+        .busy        (sink_busy),
+        .awaddr      (snk_awaddr),
+        .awlen       (snk_awlen),
+        .awsize      (snk_awsize),
+        .awburst     (snk_awburst),
+        .awvalid     (snk_awvalid),
+        .awready     (awready),
+        .wdata       (snk_wdata),
+        .wstrb       (snk_wstrb),
+        .wlast       (snk_wlast),
+        .wvalid      (snk_wvalid),
+        .wready      (wready),
+        .bresp       (bresp),
+        .bvalid      (bvalid),
+        .bready      (snk_bready),
+        .araddr      (snk_araddr),
+        .arlen       (snk_arlen),
+        .arsize      (snk_arsize),
+        .arburst     (snk_arburst),
+        .arvalid     (snk_arvalid),
+        .arready     (arready),
+        .rdata       (rdata),
+        .rresp       (rresp),
+        .rlast       (rlast),
+        .rvalid      (rvalid),
+        .rready      (snk_rready)
+    );
+
+    assign use_sink = snk_awvalid | snk_wvalid | snk_bready | snk_arvalid | snk_rready;
+
+    assign awaddr  = use_sink ? snk_awaddr  : (use_frame ? frm_awaddr  : pat_awaddr);
+    assign awlen   = use_sink ? snk_awlen   : (use_frame ? frm_awlen   : pat_awlen);
+    assign awsize  = use_sink ? snk_awsize  : (use_frame ? frm_awsize  : pat_awsize);
+    assign awburst = use_sink ? snk_awburst : (use_frame ? frm_awburst : pat_awburst);
+    assign awvalid = use_sink ? snk_awvalid : (use_frame ? frm_awvalid : pat_awvalid);
+    assign wdata   = use_sink ? snk_wdata   : (use_frame ? frm_wdata   : pat_wdata);
+    assign wstrb   = use_sink ? snk_wstrb   : (use_frame ? frm_wstrb   : pat_wstrb);
+    assign wlast   = use_sink ? snk_wlast   : (use_frame ? frm_wlast   : pat_wlast);
+    assign wvalid  = use_sink ? snk_wvalid  : (use_frame ? frm_wvalid  : pat_wvalid);
+    assign bready  = use_sink ? snk_bready  : (use_frame ? frm_bready  : pat_bready);
+    assign araddr  = use_sink ? snk_araddr  : (use_frame ? frm_araddr  : pat_araddr);
+    assign arlen   = use_sink ? snk_arlen   : (use_frame ? frm_arlen   : pat_arlen);
+    assign arsize  = use_sink ? snk_arsize  : (use_frame ? frm_arsize  : pat_arsize);
+    assign arburst = use_sink ? snk_arburst : (use_frame ? frm_arburst : pat_arburst);
+    assign arvalid = use_sink ? snk_arvalid : (use_frame ? frm_arvalid : pat_arvalid);
+    assign rready  = use_sink ? snk_rready  : (use_frame ? frm_rready  : pat_rready);
 
     always_ff @(posedge clk12) begin
         sync0 <= {raw_pass, raw_done, init_calib_complete};

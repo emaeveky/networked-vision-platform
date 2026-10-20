@@ -1,7 +1,7 @@
 import unittest
 
 from golden import motion_box, sobel_interior, threshold, xor_checksum
-from packet_codec import FRAME_BYTES, PACKET_BYTES, PACKETS_PER_FRAME, assemble_frame, pack_packet, split_frame, unpack_packet
+from packet_codec import FRAME_BYTES, PACKET_BYTES, PACKETS_PER_FRAME, assemble_frame, pack_packet, split_frame, split_image, unpack_packet
 from serial_link import (
     BG_CMD,
     BG_SYNC,
@@ -12,12 +12,17 @@ from serial_link import (
     READBACK_CMD,
     READBACK_SYNC,
     STATUS_SYNC,
+    WIDE_ARM_CMD,
+    WIDE_ARM_SYNC,
+    WIDE_DONE_SYNC,
+    arm_wide,
     capture_background,
     read_ddr_status,
     decode_status,
     encode_frame,
     read_frame,
     read_motion,
+    read_wide_done,
 )
 
 
@@ -55,6 +60,13 @@ class PacketCodecTests(unittest.TestCase):
         self.assertEqual(len(packets), PACKETS_PER_FRAME)
         shuffled = packets[::-1]
         self.assertEqual(assemble_frame(shuffled), image)
+
+    def test_wide_image_is_256_packets(self) -> None:
+        image = bytes((i * 3) & 0xFF for i in range(640 * 480))
+        packets = split_image(7, image)
+        self.assertEqual(len(packets), 256)
+        frame_id, packet_id, payload = unpack_packet(packets[255])
+        self.assertEqual((frame_id, packet_id, payload), (7, 255, image[-PACKET_BYTES:]))
 
     def test_threshold_matches_rtl_rule(self) -> None:
         image = bytes([0, 128, 129, 255])
@@ -179,6 +191,13 @@ class PacketCodecTests(unittest.TestCase):
         self.assertEqual(waiting.written, bytes([DDR_CMD]))
         passed = FakeSerial(bytes([DDR_SYNC, 0x07]))
         self.assertEqual(read_ddr_status(passed), (True, True, True))
+
+    def test_wide_arm_and_done(self) -> None:
+        armed = FakeSerial(bytes([0xE7, 0xC0, 0x80, WIDE_ARM_SYNC, 0x01]))
+        self.assertTrue(arm_wide(armed))
+        self.assertEqual(armed.written, bytes([WIDE_ARM_CMD]))
+        done = FakeSerial(bytes([WIDE_DONE_SYNC, 0x02, 0x00, 0x00, 0x01, 0x00]))
+        self.assertEqual(read_wide_done(done), (2, 256, 0))
 
 
 if __name__ == "__main__":

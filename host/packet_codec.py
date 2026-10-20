@@ -19,8 +19,8 @@ def crc32(payload: bytes) -> int:
     return zlib.crc32(payload) & 0xFFFFFFFF
 
 
-def pack_packet(frame_id: int, packet_id: int, payload: bytes) -> bytes:
-    if not 0 <= packet_id < PACKETS_PER_FRAME:
+def pack_packet(frame_id: int, packet_id: int, payload: bytes, *, limit: int = PACKETS_PER_FRAME) -> bytes:
+    if not 0 <= packet_id < limit:
         raise ValueError(f"packet_id {packet_id} is out of range")
     if len(payload) != PACKET_BYTES:
         raise ValueError(f"payload must be {PACKET_BYTES} bytes")
@@ -39,6 +39,22 @@ def unpack_packet(blob: bytes) -> tuple[int, int, bytes]:
     if crc32(payload) != got_crc:
         raise ValueError("crc mismatch")
     return frame_id, packet_id, payload
+
+
+def split_image(frame_id: int, image: bytes) -> list[bytes]:
+    """Split an image whose length is a multiple of 1,200 bytes, up to 256 packets."""
+    if len(image) % PACKET_BYTES:
+        raise ValueError(f"image length {len(image)} is not a multiple of {PACKET_BYTES}")
+    count = len(image) // PACKET_BYTES
+    if not 1 <= count <= 256:
+        raise ValueError(f"{count} packets is outside 1..256")
+    packets = []
+    for packet_id in range(count):
+        start = packet_id * PACKET_BYTES
+        packets.append(
+            pack_packet(frame_id, packet_id, image[start : start + PACKET_BYTES], limit=256)
+        )
+    return packets
 
 
 def split_frame(frame_id: int, image: bytes) -> list[bytes]:

@@ -4,11 +4,13 @@ module proto_parser (
 
     input  logic        rx_valid,
     input  logic [7:0]  rx_data,
+    input  logic        wide_ok = 1'b0,
     output logic        rx_ready,
 
     output logic        hdr_valid,
     output logic [15:0] frame_id,
     output logic [5:0]  packet_id,
+    output logic [7:0]  packet_id_full,
     output logic [10:0] payload_len,
     output logic        data_valid,
     output logic [7:0]  data,
@@ -113,7 +115,8 @@ module proto_parser (
                     end
                     ST_LEN_HI: begin
                         len_r[15:8] <= rx_data;
-                        if ({rx_data, len_r[7:0]} != 16'(PACKET_BYTES) || packet_id_r[7:6] != 2'b00) begin
+                        if ({rx_data, len_r[7:0]} != 16'(PACKET_BYTES) ||
+                            (!wide_ok && packet_id_r[7:6] != 2'b00)) begin
                             parse_error <= 1'b1;
                             state <= ST_MAGIC;
                         end
@@ -159,8 +162,9 @@ module proto_parser (
         end
     end
 
-    assign frame_id    = frame_id_r;
-    assign packet_id   = packet_id_r[5:0];
-    assign payload_len = 11'(PACKET_BYTES);
+    assign frame_id       = frame_id_r;
+    assign packet_id      = packet_id_r[5:0];
+    assign packet_id_full = packet_id_r;
+    assign payload_len    = 11'(PACKET_BYTES);
 
 endmodule

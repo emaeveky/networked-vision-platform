@@ -6,16 +6,93 @@ import argparse
 import time
 
 from golden import motion_box, sobel_interior, threshold
-from packet_codec import FRAME_HEIGHT, FRAME_WIDTH
+from packet_codec import FRAME_HEIGHT, FRAME_WIDTH, split_image
 from serial_link import (
     MotionBox,
+    arm_wide,
     capture_background,
     encode_frame,
     open_serial,
+    read_ddr_status,
     read_frame,
     read_motion,
     read_status,
+    read_wide_done,
 )
+
+
+def wide_gradient(frame_id: int) -> bytes:
+    width, height = 640, 480
+    return bytes(
+        (x + y + frame_id) & 0xFF
+        for y in range(height)
+        for x in range(width)
+    )
+
+
+def run_wide(args, link, camera) -> None:
+    """Send one or more 640x480 frames straight into DDR and check them."""
+    import cv2
+
+    frames = args.frames or 1
+    deadline = time.monotonic() + 8
+    ready = None
+    while time.monotonic() < deadline:
+        ready = read_ddr_status(link)
+        if ready is not None and ready[1]:
+            break
+        time.sleep(0.05)
+    if not ready or not ready[0] or not ready[1]:
+        print(f"DDR controller was not ready ({ready})", flush=True)
+        return
+    for frame_id in range(frames):
+        if camera is not None:
+            ok, color = camera.read()
+            if not ok:
+                raise SystemExit("webcam stopped returning frames")
+            gray = cv2.cvtColor(color, cv2.COLOR_BGR2GRAY)
+            image = cv2.resize(gray, (640, 480)).tobytes()
+        else:
+            image = wide_gradient(frame_id)
+        if not arm_wide(link):
+            print(f"frame {frame_id}: DDR wide mode was not armed", flush=True)
+            return
+        payload = b"".join(split_image(frame_id, image))
+        link.reset_input_buffer()
+        for offset in range(0, len(payload), 1024):
+            link.write(payload[offset : offset + 1024])
+        link.flush()
+        print(f"frame {frame_id}: sent {len(payload)} bytes, waiting for DDR", flush=True)
+        done = read_wide_done(link)
+        if done is None or done[1] != 256 or done[2] != 0:
+            print(f"frame {frame_id}: wide commit failed ({done})", flush=True)
+            return
+        print(
+            f"frame {done[0]}: DDR accepted {done[1]} packets",
+            flush=True,
+        )
+        if args.readback:
+            result = read_frame(link, "wide")
+            if result is None:
+                print(f"frame {frame_id}: no wide readback", flush=True)
+                return
+            got_id, got = result
+            mismatch = next(
+                (i for i, (want, have) in enumerate(zip(image, got)) if want != have),
+                None,
+            )
+            if mismatch is None and len(got) == len(image):
+                print(
+                    f"frame {got_id}: wide readback verified {len(got)} pixels",
+                    flush=True,
+                )
+            else:
+                shown = mismatch if mismatch is not None else 0
+                print(
+                    f"frame {got_id}: wide readback mismatch at pixel {shown}",
+                    flush=True,
+                )
+                return
 
 
 def gradient_frame(frame_id: int) -> bytes:
@@ -88,9 +165,9 @@ def main() -> None:
     )
     parser.add_argument(
         "--process",
-        choices=("raw", "threshold", "sobel", "motion", "ddr"),
+        choices=("raw", "threshold", "sobel", "motion", "ddr", "wide"),
         default="raw",
-        help="FPGA result: raw, threshold, sobel, the DDR copy, or a motion box",
+        help="FPGA result: raw, threshold, sobel, the DDR copy, a 640x480 DDR frame, or a motion box",
     )
     parser.add_argument(
         "--lock-background",
@@ -125,6 +202,11 @@ def main() -> None:
     background_locked = False
 
     try:
+        if args.process == "wide":
+            if link is None:
+                raise SystemExit("--process wide needs --port")
+            run_wide(args, link, camera)
+            return
         while True:
             started = time.monotonic()
             if camera is not None:

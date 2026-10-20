@@ -13,6 +13,17 @@ module ddr3_board (
     output logic        copy_last,
     input  logic        copy_ready,
 
+    input  logic        sink_byte_valid,
+    input  logic [7:0]  sink_byte,
+    input  logic [18:0] sink_byte_addr,
+    output logic        sink_write_idle,
+    input  logic        sink_read_go,
+    output logic [7:0]  sink_out_byte,
+    output logic        sink_out_valid,
+    output logic        sink_out_last,
+    input  logic        sink_out_ready,
+    output logic        sink_busy,
+
     output logic        calib,
     output logic        test_done,
     output logic        test_pass,
@@ -43,6 +54,11 @@ module ddr3_board (
     assign copy_byte = 8'd0;
     assign copy_valid = 1'b0;
     assign copy_last = 1'b0;
+    assign sink_write_idle = 1'b1;
+    assign sink_out_byte = 8'd0;
+    assign sink_out_valid = 1'b0;
+    assign sink_out_last = 1'b0;
+    assign sink_busy = 1'b0;
     assign ddr3_addr = 14'd0;
     assign ddr3_ba   = 3'd0;
     assign ddr3_ras_n = 1'b1;
@@ -57,6 +73,7 @@ module ddr3_board (
     assign ddr3_odt  = 1'b0;
 
     wire unused = clk12 ^ clk100 ^ rst12 ^ copy_go ^ copy_ready ^ (|copy_rd_data) ^
+        sink_byte_valid ^ (|sink_byte) ^ (|sink_byte_addr) ^ sink_read_go ^ sink_out_ready ^
         (|ddr3_dq) ^ (|ddr3_dqs_n) ^ (|ddr3_dqs_p);
 
 endmodule

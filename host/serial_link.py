@@ -19,11 +19,17 @@ BG_CMD = 0x42
 BG_SYNC = 0xD5
 DDR_CMD = 0x44
 DDR_SYNC = 0xD6
+WIDE_ARM_CMD = 0x57
+WIDE_ARM_SYNC = 0xD7
+WIDE_DONE_SYNC = 0xD8
+WIDE_READ_CMD = 0x58
+WIDE_BYTES = 640 * 480
 READBACK_COMMANDS = {
     "raw": READBACK_CMD,
     "threshold": THRESHOLD_CMD,
     "sobel": SOBEL_CMD,
     "ddr": 0x46,
+    "wide": WIDE_READ_CMD,
 }
 READBACK_SYNC = 0xD3
 MOTION_SYNC = 0xD4
@@ -203,6 +209,42 @@ def capture_background(link) -> bool:
             if not rest:
                 return False
     return False
+
+
+def arm_wide(link) -> bool:
+    """Let the next packets use ids 0..255 and land in DDR instead of block RAM."""
+    link.reset_input_buffer()
+    link.write(bytes([WIDE_ARM_CMD]))
+    link.flush()
+    deadline = time.monotonic() + float(getattr(link, "timeout", 8.0) or 8.0)
+    while time.monotonic() < deadline:
+        first = link.read(1)
+        if not first:
+            return False
+        if first[0] == WIDE_ARM_SYNC:
+            rest = link.read(1)
+            return rest == bytes([0x01])
+    return False
+
+
+def read_wide_done(link) -> tuple[int, int, int] | None:
+    """Wait until all 256 wide packets have been committed.
+
+    Returns frame_id, packet count, and the crc-error flag.
+    """
+    deadline = time.monotonic() + float(getattr(link, "timeout", 8.0) or 8.0)
+    while time.monotonic() < deadline:
+        first = link.read(1)
+        if not first:
+            return None
+        if first[0] == WIDE_DONE_SYNC:
+            rest = _read_exact(link, 5)
+            if rest is None:
+                return None
+            frame_id = rest[0] | (rest[1] << 8)
+            count = rest[2] | (rest[3] << 8)
+            return frame_id, count, rest[4]
+    return None
 
 
 def read_ddr_status(link) -> tuple[bool, bool, bool] | None:
